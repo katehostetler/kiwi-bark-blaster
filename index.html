@@ -139,16 +139,15 @@
         #touchControls {
             display: block;
         }
-        #gameCanvas {
-            max-width: 100vw;
-            max-height: calc(100vh - 160px);
-            max-height: calc(100dvh - 160px);
-            width: auto;
-            height: auto;
-        }
         body {
-            align-items: flex-start;
-            padding-top: 8px;
+            justify-content: flex-start;
+        }
+        #gameCanvas {
+            width: 100vw;
+            height: calc(100vh - 120px);
+            height: calc(100dvh - 120px);
+            border: none;
+            box-shadow: none;
         }
     }
 </style>
@@ -247,12 +246,17 @@ const AudioSystem = (function () {
     };
 
     function init() {
-        if (ctx) return;
-        ctx = new (window.AudioContext || window.webkitAudioContext)();
-        masterGain = ctx.createGain();
-        masterGain.gain.value = 1.0;
-        masterGain.connect(ctx.destination);
-        if (ctx.state === 'suspended') ctx.resume();
+        if (!ctx) {
+            ctx = new (window.AudioContext || window.webkitAudioContext)();
+            masterGain = ctx.createGain();
+            masterGain.gain.value = 1.0;
+            masterGain.connect(ctx.destination);
+        }
+        // Always try to resume — iOS suspends the context and requires
+        // resume() to be called from a direct user gesture each time
+        if (ctx.state === 'suspended') {
+            ctx.resume();
+        }
     }
 
     function playBark() {
@@ -562,6 +566,22 @@ const AudioSystem = (function () {
 
     function startMusic() {
         if (!ctx || musicPlaying) return;
+        // Ensure audio context is running (critical for iOS)
+        if (ctx.state === 'suspended') {
+            ctx.resume().then(() => {
+                if (!musicPlaying) startMusicInternal();
+            });
+            // Also try immediately in case resume is synchronous
+            if (ctx.state === 'running') {
+                startMusicInternal();
+                return;
+            }
+            return;
+        }
+        startMusicInternal();
+    }
+
+    function startMusicInternal() {
         musicPlaying = true;
         currentBar = 0;
         musicStartTime = ctx.currentTime + 0.05;
@@ -734,6 +754,21 @@ document.addEventListener('keyup', (e) => {
 // ============================================================
 
 const isTouchDevice = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+
+// Dynamically size canvas to fill available screen on mobile
+function resizeCanvasForMobile() {
+    if (!isTouchDevice) return;
+    const touchBar = document.getElementById('touchControls');
+    const touchHeight = touchBar ? touchBar.offsetHeight : 120;
+    canvas.style.width = window.innerWidth + 'px';
+    canvas.style.height = (window.innerHeight - touchHeight) + 'px';
+}
+
+if (isTouchDevice) {
+    resizeCanvasForMobile();
+    window.addEventListener('resize', resizeCanvasForMobile);
+    setTimeout(resizeCanvasForMobile, 100);
+}
 
 function initTouch() {
     function bindHold(btnId, keyCode) {
@@ -1704,6 +1739,8 @@ const game = {
         this.boss = null;
         this.gameOverNewHigh = false;
         this.spawnWave();
+        // Ensure audio is initialized and resumed (critical for mobile)
+        AudioSystem.init();
         AudioSystem.startMusic();
     },
 
