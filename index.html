@@ -619,8 +619,8 @@ const AudioSystem = (function () {
 //  CONSTANTS
 // ============================================================
 
-const CANVAS_W = 800;
-const CANVAS_H = 600;
+let CANVAS_W = 800;
+let CANVAS_H = 600;
 const FPS = 60;
 const FRAME_TIME = 1000 / FPS;
 
@@ -700,6 +700,22 @@ const SCORE_BOSS_KILL = 200;
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 const muteBtn = document.getElementById('muteBtn');
+
+// On mobile portrait, adjust canvas resolution to match screen aspect ratio
+// so the game fills the screen without distortion
+(function adjustForMobile() {
+    const touch = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+    const portrait = window.innerHeight > window.innerWidth;
+    if (touch && portrait) {
+        const touchControlsHeight = 120;
+        const screenW = window.innerWidth;
+        const screenH = window.innerHeight - touchControlsHeight;
+        // Scale so width stays at 800 internal pixels, height adjusts to match aspect ratio
+        CANVAS_H = Math.round(800 * (screenH / screenW));
+        canvas.width = CANVAS_W;
+        canvas.height = CANVAS_H;
+    }
+})();
 
 let audioInitialized = false;
 let muted = false;
@@ -2201,37 +2217,37 @@ function drawTitleScreen(now) {
     // Animated background squirrels
     for (let i = 0; i < 5; i++) {
         const sx = (i * 160 + (now / 20) % 800) % 880 - 40;
-        const sy = 120 + Math.sin(t * 2 + i) * 20;
+        const sy = CANVAS_H * 0.15 + Math.sin(t * 2 + i) * 20;
         ctx.globalAlpha = 0.3;
         drawSquirrel(sx, sy, Math.floor(t * 2) % 2);
         ctx.globalAlpha = 1;
     }
 
     // Title
-    const titleY = 160 + Math.sin(t * 1.5) * 5;
+    const titleY = CANVAS_H * 0.22 + Math.sin(t * 1.5) * 5;
     drawBlockText("KIWI'S", CANVAS_W / 2, titleY - 30, 48, COLORS.TEXT_YELLOW);
     drawBlockText("BARK BLASTER", CANVAS_W / 2, titleY + 30, 42, COLORS.TEXT_GREEN);
 
     // Kiwi sprite - large and centered
-    drawKiwi(CANVAS_W / 2, 320, 2.5);
+    drawKiwi(CANVAS_W / 2, CANVAS_H * 0.48, 2.5);
 
     // Flashing start text
     if (Math.floor(t * 2) % 2 === 0) {
         const startMsg = isTouchDevice ? 'TAP TO START' : 'PRESS ENTER TO START';
-        drawRetroText(startMsg, CANVAS_W / 2, 440, 20, COLORS.TEXT, 'center');
+        drawRetroText(startMsg, CANVAS_W / 2, CANVAS_H * 0.68, 20, COLORS.TEXT, 'center');
     }
 
     // High score
-    drawRetroText(`HIGH SCORE: ${game.highScore}`, CANVAS_W / 2, 490, 16, COLORS.TEXT_YELLOW, 'center');
+    drawRetroText(`HIGH SCORE: ${game.highScore}`, CANVAS_W / 2, CANVAS_H * 0.78, 16, COLORS.TEXT_YELLOW, 'center');
 
     // Controls
     const controlsMsg = isTouchDevice
         ? 'USE ON-SCREEN BUTTONS TO MOVE AND BARK!'
         : '\u2190 \u2192 MOVE   SPACE BARK   Z ZOOMIES   ENTER START';
-    drawRetroText(controlsMsg, CANVAS_W / 2, 520, 12, '#888888', 'center');
+    drawRetroText(controlsMsg, CANVAS_W / 2, CANVAS_H * 0.86, 12, '#888888', 'center');
 
     // Credits
-    drawRetroText('DEFEND THE BACKYARD FROM SQUIRREL INVADERS!', CANVAS_W / 2, 545, 11, '#666666', 'center');
+    drawRetroText('DEFEND THE BACKYARD FROM SQUIRREL INVADERS!', CANVAS_W / 2, CANVAS_H * 0.91, 11, '#666666', 'center');
 }
 
 function drawWaveTransition(now) {
