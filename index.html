@@ -1,0 +1,2218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kiwi's Bark Blaster</title>
+<style>
+    * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+    }
+
+    body {
+        background: #0a0a0a;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        min-height: 100vh;
+        overflow: hidden;
+        font-family: monospace;
+    }
+
+    #gameCanvas {
+        border: 2px solid #333;
+        box-shadow:
+            0 0 20px rgba(0, 255, 128, 0.3),
+            0 0 40px rgba(0, 255, 128, 0.1),
+            inset 0 0 20px rgba(0, 0, 0, 0.5);
+        image-rendering: pixelated;
+        /* CRT scanline overlay */
+        background: repeating-linear-gradient(
+            0deg,
+            rgba(0, 0, 0, 0.15) 0px,
+            rgba(0, 0, 0, 0.15) 1px,
+            transparent 1px,
+            transparent 3px
+        );
+    }
+
+    #muteBtn {
+        position: fixed;
+        top: 16px;
+        right: 16px;
+        background: rgba(0, 0, 0, 0.7);
+        border: 1px solid #444;
+        color: #fff;
+        font-size: 24px;
+        padding: 8px 12px;
+        cursor: pointer;
+        border-radius: 4px;
+        z-index: 10;
+        transition: border-color 0.2s;
+    }
+
+    #muteBtn:hover {
+        border-color: #0f8;
+    }
+</style>
+</head>
+<body>
+
+<canvas id="gameCanvas" width="800" height="600"></canvas>
+<button id="muteBtn">&#x1F50A;</button>
+
+<script>
+// ============================================================
+//  KIWI'S BARK BLASTER
+//  A Space Invaders-style retro arcade game starring Kiwi,
+//  a tiny fluffy Pomeranian defending the backyard from
+//  invading squirrels.
+// ============================================================
+
+// === AUDIO SYSTEM ===
+// Kiwi's Bark Blaster - Chiptune Audio Engine
+// Procedurally generated 8-bit sound effects and music using Web Audio API
+const AudioSystem = (function () {
+    let ctx = null;
+    let masterGain = null;
+    let muted = false;
+    let musicPlaying = false;
+    let musicSchedulerId = null;
+    let musicNodes = [];
+
+    const BPM = 140;
+    const BEAT = 60 / BPM;
+    const SIXTEENTH = BEAT / 4;
+    const BAR = BEAT * 4;
+    let musicStartTime = 0;
+    let nextBarScheduleTime = 0;
+    let currentBar = 0;
+    const TOTAL_BARS = 16;
+    const SCHEDULE_AHEAD = 0.2;
+
+    function makeGain(volume) {
+        const g = ctx.createGain();
+        g.gain.value = volume;
+        g.connect(masterGain);
+        return g;
+    }
+
+    function playTone(type, freq, gainVal, startTime, duration, gainNode) {
+        const osc = ctx.createOscillator();
+        osc.type = type;
+        osc.frequency.value = freq;
+        const g = gainNode || makeGain(gainVal);
+        osc.connect(g);
+        osc.start(startTime);
+        osc.stop(startTime + duration);
+        osc.onended = () => { osc.disconnect(); if (!gainNode) g.disconnect(); };
+        return osc;
+    }
+
+    function playNoise(gainVal, startTime, duration, gainNode) {
+        const bufferSize = ctx.sampleRate * Math.max(duration, 0.05);
+        const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+        const data = buffer.getChannelData(0);
+        for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+        const src = ctx.createBufferSource();
+        src.buffer = buffer;
+        const g = gainNode || makeGain(gainVal);
+        src.connect(g);
+        src.start(startTime);
+        src.stop(startTime + duration);
+        src.onended = () => { src.disconnect(); if (!gainNode) g.disconnect(); };
+        return src;
+    }
+
+    function mtof(note) { return 440 * Math.pow(2, (note - 69) / 12); }
+
+    const NOTE = {
+        C3: 48, D3: 50, E3: 52, F3: 53, G3: 55, A3: 57, B3: 59,
+        C4: 60, D4: 62, E4: 64, F4: 65, G4: 67, A4: 69, B4: 71,
+        C5: 72, D5: 74, E5: 76, F5: 77, G5: 79, A5: 81, B5: 83, C6: 84,
+        Cs3: 49, Ds3: 51, Fs3: 54, Gs3: 56, As3: 58,
+        Cs4: 61, Ds4: 63, Fs4: 66, Gs4: 68, As4: 70,
+        Cs5: 73, Ds5: 75, Fs5: 78, Gs5: 80, As5: 82,
+        Eb3: 51, Bb3: 58, Eb4: 63, Bb4: 70, Ab4: 68, Eb5: 75, Bb5: 82,
+    };
+
+    function init() {
+        if (ctx) return;
+        ctx = new (window.AudioContext || window.webkitAudioContext)();
+        masterGain = ctx.createGain();
+        masterGain.gain.value = 1.0;
+        masterGain.connect(ctx.destination);
+        if (ctx.state === 'suspended') ctx.resume();
+    }
+
+    function playBark() {
+        if (!ctx) return;
+        const now = ctx.currentTime;
+        const g = makeGain(0);
+        const osc = ctx.createOscillator();
+        osc.type = 'square';
+        osc.frequency.setValueAtTime(800, now);
+        osc.frequency.linearRampToValueAtTime(400, now + 0.08);
+        osc.connect(g);
+        g.gain.setValueAtTime(0.28, now);
+        g.gain.setValueAtTime(0.28, now + 0.02);
+        g.gain.linearRampToValueAtTime(0, now + 0.10);
+        osc.start(now);
+        osc.stop(now + 0.10);
+        osc.onended = () => { osc.disconnect(); g.disconnect(); };
+        const osc2 = ctx.createOscillator();
+        osc2.type = 'square';
+        osc2.frequency.setValueAtTime(1200, now);
+        osc2.frequency.linearRampToValueAtTime(600, now + 0.06);
+        const g2 = makeGain(0);
+        osc2.connect(g2);
+        g2.gain.setValueAtTime(0.10, now);
+        g2.gain.linearRampToValueAtTime(0, now + 0.07);
+        osc2.start(now);
+        osc2.stop(now + 0.07);
+        osc2.onended = () => { osc2.disconnect(); g2.disconnect(); };
+    }
+
+    function playSquirrelHit() {
+        if (!ctx) return;
+        const now = ctx.currentTime;
+        const ng = makeGain(0);
+        ng.gain.setValueAtTime(0.30, now);
+        ng.gain.linearRampToValueAtTime(0, now + 0.20);
+        playNoise(0, now, 0.20, ng);
+        const osc = ctx.createOscillator();
+        osc.type = 'square';
+        osc.frequency.setValueAtTime(600, now);
+        osc.frequency.exponentialRampToValueAtTime(80, now + 0.18);
+        const g = makeGain(0);
+        osc.connect(g);
+        g.gain.setValueAtTime(0.22, now);
+        g.gain.linearRampToValueAtTime(0, now + 0.20);
+        osc.start(now);
+        osc.stop(now + 0.20);
+        osc.onended = () => { osc.disconnect(); g.disconnect(); };
+    }
+
+    function playPowerUp() {
+        if (!ctx) return;
+        const now = ctx.currentTime;
+        const notes = [mtof(NOTE.C5), mtof(NOTE.E5), mtof(NOTE.G5), mtof(NOTE.C6)];
+        const step = 0.07;
+        notes.forEach((freq, i) => {
+            const t = now + i * step;
+            const g = makeGain(0);
+            g.gain.setValueAtTime(0.22, t);
+            g.gain.linearRampToValueAtTime(0.22, t + step * 0.8);
+            g.gain.linearRampToValueAtTime(0, t + step * 1.2);
+            playTone('square', freq, 0, t, step * 1.3, g);
+        });
+    }
+
+    function playGameOver() {
+        if (!ctx) return;
+        const now = ctx.currentTime;
+        const notes = [mtof(NOTE.G4), mtof(NOTE.Eb4), mtof(NOTE.C4), mtof(NOTE.G3), mtof(NOTE.Eb3)];
+        const step = 0.30;
+        notes.forEach((freq, i) => {
+            const t = now + i * step;
+            const g = makeGain(0);
+            g.gain.setValueAtTime(0.20, t);
+            g.gain.linearRampToValueAtTime(0.18, t + step * 0.6);
+            g.gain.linearRampToValueAtTime(0, t + step * 0.95);
+            playTone('triangle', freq, 0, t, step, g);
+        });
+    }
+
+    function playBossAppear() {
+        if (!ctx) return;
+        const now = ctx.currentTime;
+        const rumbleG = makeGain(0);
+        rumbleG.gain.setValueAtTime(0.18, now);
+        rumbleG.gain.linearRampToValueAtTime(0.25, now + 0.5);
+        rumbleG.gain.linearRampToValueAtTime(0, now + 1.0);
+        const rumble = ctx.createOscillator();
+        rumble.type = 'sawtooth';
+        rumble.frequency.setValueAtTime(55, now);
+        rumble.frequency.linearRampToValueAtTime(40, now + 1.0);
+        rumble.connect(rumbleG);
+        rumble.start(now);
+        rumble.stop(now + 1.0);
+        rumble.onended = () => { rumble.disconnect(); rumbleG.disconnect(); };
+        [mtof(NOTE.D3), mtof(NOTE.D3), mtof(NOTE.Ds3), mtof(NOTE.D3)].forEach((freq, i) => {
+            const t = now + i * 0.22;
+            const g = makeGain(0);
+            g.gain.setValueAtTime(0.25, t);
+            g.gain.linearRampToValueAtTime(0, t + 0.12);
+            playTone('square', freq, 0, t, 0.14, g);
+        });
+        const warnG = makeGain(0);
+        warnG.gain.setValueAtTime(0, now);
+        warnG.gain.linearRampToValueAtTime(0.15, now + 0.3);
+        warnG.gain.linearRampToValueAtTime(0, now + 1.0);
+        const warn = ctx.createOscillator();
+        warn.type = 'square';
+        warn.frequency.setValueAtTime(mtof(NOTE.A5), now);
+        warn.connect(warnG);
+        warn.start(now);
+        warn.stop(now + 1.0);
+        warn.onended = () => { warn.disconnect(); warnG.disconnect(); };
+    }
+
+    function playBossHit() {
+        if (!ctx) return;
+        const now = ctx.currentTime;
+        const osc = ctx.createOscillator();
+        osc.type = 'square';
+        osc.frequency.setValueAtTime(300, now);
+        osc.frequency.exponentialRampToValueAtTime(80, now + 0.12);
+        const g = makeGain(0);
+        osc.connect(g);
+        g.gain.setValueAtTime(0.30, now);
+        g.gain.linearRampToValueAtTime(0, now + 0.15);
+        osc.start(now);
+        osc.stop(now + 0.15);
+        osc.onended = () => { osc.disconnect(); g.disconnect(); };
+        const ng = makeGain(0);
+        ng.gain.setValueAtTime(0.15, now);
+        ng.gain.linearRampToValueAtTime(0, now + 0.10);
+        playNoise(0, now, 0.10, ng);
+    }
+
+    function playBossDefeat() {
+        if (!ctx) return;
+        const now = ctx.currentTime;
+        const notes = [
+            { n: NOTE.C4, dur: 0.15 }, { n: NOTE.E4, dur: 0.15 },
+            { n: NOTE.G4, dur: 0.15 }, { n: NOTE.C5, dur: 0.20 },
+            { n: NOTE.E5, dur: 0.20 }, { n: NOTE.G5, dur: 0.25 },
+            { n: NOTE.C6, dur: 0.45 }, { n: NOTE.C6, dur: 0.35 },
+        ];
+        let t = now;
+        notes.forEach((note) => {
+            const freq = mtof(note.n);
+            const g = makeGain(0);
+            g.gain.setValueAtTime(0.22, t);
+            g.gain.setValueAtTime(0.22, t + note.dur * 0.7);
+            g.gain.linearRampToValueAtTime(0, t + note.dur * 0.98);
+            playTone('square', freq, 0, t, note.dur, g);
+            t += note.dur;
+        });
+        const harmonyStart = now + 0.65;
+        const hNotes = [
+            { n: NOTE.E5, dur: 0.25 }, { n: NOTE.G5, dur: 0.45 }, { n: NOTE.E5, dur: 0.35 },
+        ];
+        let ht = harmonyStart;
+        hNotes.forEach((note) => {
+            const g = makeGain(0);
+            g.gain.setValueAtTime(0.12, ht);
+            g.gain.linearRampToValueAtTime(0, ht + note.dur * 0.9);
+            playTone('square', mtof(note.n), 0, ht, note.dur, g);
+            ht += note.dur;
+        });
+    }
+
+    const R = 0;
+    const melodyBars = [
+        [NOTE.C5,R,NOTE.E5,R,NOTE.G5,R,NOTE.G5,R,NOTE.E5,R,NOTE.C5,R,NOTE.E5,R,NOTE.G5,R],
+        [NOTE.A5,R,NOTE.G5,R,NOTE.E5,R,NOTE.G5,R,NOTE.C5,R,R,R,NOTE.C5,NOTE.D5,NOTE.E5,R],
+        [NOTE.C5,R,NOTE.E5,R,NOTE.G5,R,NOTE.A5,R,NOTE.G5,R,NOTE.E5,R,NOTE.D5,R,NOTE.C5,R],
+        [NOTE.D5,R,NOTE.E5,R,NOTE.D5,R,R,R,NOTE.C5,R,R,R,R,R,R,R],
+        [NOTE.E5,R,NOTE.G5,R,NOTE.A5,R,NOTE.G5,R,NOTE.E5,R,NOTE.C5,R,NOTE.D5,R,NOTE.E5,R],
+        [NOTE.G5,R,NOTE.A5,R,NOTE.C6,R,NOTE.A5,R,NOTE.G5,R,R,R,NOTE.G5,NOTE.A5,NOTE.G5,R],
+        [NOTE.E5,R,NOTE.G5,R,NOTE.A5,R,NOTE.C6,R,NOTE.A5,R,NOTE.G5,R,NOTE.E5,R,NOTE.D5,R],
+        [NOTE.E5,R,NOTE.D5,R,NOTE.C5,R,R,R,NOTE.C5,R,R,R,R,R,R,R],
+        [NOTE.C4,R,NOTE.E4,R,NOTE.G4,R,NOTE.C5,R,NOTE.B4,R,NOTE.G4,R,NOTE.E4,R,NOTE.G4,R],
+        [NOTE.A4,R,NOTE.C5,R,NOTE.E5,R,NOTE.C5,R,NOTE.A4,R,R,R,NOTE.A4,NOTE.B4,NOTE.C5,R],
+        [NOTE.D5,R,NOTE.E5,R,NOTE.D5,R,NOTE.C5,R,NOTE.B4,R,NOTE.C5,R,NOTE.D5,R,NOTE.E5,R],
+        [NOTE.D5,R,NOTE.C5,R,NOTE.B4,R,R,R,NOTE.G4,R,R,R,R,R,R,R],
+        [NOTE.C5,R,NOTE.E5,R,NOTE.G5,R,NOTE.G5,R,NOTE.E5,R,NOTE.C5,R,NOTE.E5,R,NOTE.G5,R],
+        [NOTE.A5,R,NOTE.G5,R,NOTE.E5,R,NOTE.G5,R,NOTE.A5,R,NOTE.C6,R,NOTE.A5,R,NOTE.G5,R],
+        [NOTE.E5,R,NOTE.G5,R,NOTE.A5,R,NOTE.C6,R,NOTE.C6,R,NOTE.A5,R,NOTE.G5,R,NOTE.A5,R],
+        [NOTE.C6,R,NOTE.A5,R,NOTE.G5,R,NOTE.E5,R,NOTE.D5,R,NOTE.C5,R,NOTE.B4,R,NOTE.C5,R],
+    ];
+    const bassBars = [
+        [NOTE.C3,R,R,R,NOTE.G3,R,R,R,NOTE.C3,R,R,R,NOTE.G3,R,R,R],
+        [NOTE.A3,R,R,R,NOTE.E3,R,R,R,NOTE.A3,R,R,R,NOTE.E3,R,R,R],
+        [NOTE.F3,R,R,R,NOTE.C3,R,R,R,NOTE.F3,R,R,R,NOTE.C3,R,R,R],
+        [NOTE.G3,R,R,R,NOTE.D3,R,R,R,NOTE.G3,R,R,R,NOTE.D3,R,R,R],
+        [NOTE.C3,R,R,R,NOTE.G3,R,R,R,NOTE.C3,R,R,R,NOTE.G3,R,R,R],
+        [NOTE.F3,R,R,R,NOTE.C3,R,R,R,NOTE.F3,R,R,R,NOTE.A3,R,R,R],
+        [NOTE.A3,R,R,R,NOTE.E3,R,R,R,NOTE.A3,R,R,R,NOTE.E3,R,R,R],
+        [NOTE.G3,R,R,R,NOTE.D3,R,R,R,NOTE.G3,R,R,R,NOTE.G3,R,NOTE.B3,R],
+        [NOTE.C3,R,R,R,NOTE.C3,R,NOTE.E3,R,NOTE.G3,R,R,R,NOTE.E3,R,R,R],
+        [NOTE.A3,R,R,R,NOTE.A3,R,NOTE.C3,R,NOTE.E3,R,R,R,NOTE.A3,R,R,R],
+        [NOTE.D3,R,R,R,NOTE.A3,R,R,R,NOTE.D3,R,R,R,NOTE.F3,R,R,R],
+        [NOTE.G3,R,R,R,NOTE.D3,R,R,R,NOTE.G3,R,R,R,NOTE.G3,R,NOTE.B3,R],
+        [NOTE.C3,R,R,R,NOTE.G3,R,R,R,NOTE.C3,R,R,R,NOTE.G3,R,R,R],
+        [NOTE.F3,R,R,R,NOTE.C3,R,R,R,NOTE.A3,R,R,R,NOTE.E3,R,R,R],
+        [NOTE.F3,R,R,R,NOTE.F3,R,NOTE.G3,R,NOTE.G3,R,R,R,NOTE.G3,R,NOTE.B3,R],
+        [NOTE.G3,R,R,R,NOTE.G3,R,NOTE.B3,R,NOTE.C3,R,R,R,NOTE.C3,R,NOTE.G3,R],
+    ];
+    const K=1, S=2, H=3;
+    const drumPattern = [
+        [K,R,H,R,S,R,H,R,K,R,H,R,S,R,H,H],
+        [K,R,H,R,S,R,H,R,K,R,H,R,S,R,H,H],
+        [K,R,H,R,S,R,H,R,K,R,H,R,S,R,H,H],
+        [K,R,H,R,S,R,H,H,K,R,H,R,S,S,S,S],
+        [K,R,H,R,S,R,H,R,K,R,H,R,S,R,H,H],
+        [K,R,H,R,S,R,H,R,K,R,H,R,S,R,H,H],
+        [K,R,H,R,S,R,H,R,K,R,H,R,S,R,H,H],
+        [K,R,H,R,S,R,H,H,K,K,H,R,S,S,S,S],
+        [K,R,H,R,S,R,H,R,K,R,H,R,S,R,H,R],
+        [K,R,H,R,S,R,H,R,K,R,H,R,S,R,H,R],
+        [K,R,H,H,S,R,H,R,K,R,H,H,S,R,H,R],
+        [K,R,H,R,S,R,H,H,K,K,S,S,K,K,S,S],
+        [K,R,H,R,S,R,H,R,K,R,H,R,S,R,H,H],
+        [K,R,H,R,S,R,H,R,K,R,H,R,S,R,H,H],
+        [K,R,H,H,S,R,H,H,K,R,H,H,S,R,H,H],
+        [K,K,S,S,K,K,S,S,K,K,S,S,S,S,S,S],
+    ];
+
+    function scheduleBar(barIndex, startTime) {
+        const melody = melodyBars[barIndex];
+        const bass = bassBars[barIndex];
+        const drums = drumPattern[barIndex];
+        for (let i = 0; i < 16; i++) {
+            const noteVal = melody[i];
+            if (noteVal === R) continue;
+            const t = startTime + i * SIXTEENTH;
+            let len = SIXTEENTH;
+            for (let j = i + 1; j < 16; j++) { if (melody[j] !== R) break; len += SIXTEENTH; }
+            const dur = len * 0.85, freq = mtof(noteVal);
+            const osc = ctx.createOscillator();
+            osc.type = 'square';
+            osc.frequency.setValueAtTime(freq, t);
+            const g = makeGain(0);
+            g.gain.setValueAtTime(0.12, t);
+            g.gain.setValueAtTime(0.12, t + dur * 0.7);
+            g.gain.linearRampToValueAtTime(0, t + dur);
+            osc.connect(g); osc.start(t); osc.stop(t + dur + 0.01);
+            osc.onended = () => { osc.disconnect(); g.disconnect(); };
+            musicNodes.push(osc);
+        }
+        for (let i = 0; i < 16; i++) {
+            const noteVal = bass[i];
+            if (noteVal === R) continue;
+            const t = startTime + i * SIXTEENTH;
+            let len = SIXTEENTH;
+            for (let j = i + 1; j < 16; j++) { if (bass[j] !== R) break; len += SIXTEENTH; }
+            const dur = len * 0.80, freq = mtof(noteVal);
+            const osc = ctx.createOscillator();
+            osc.type = 'triangle';
+            osc.frequency.setValueAtTime(freq, t);
+            const g = makeGain(0);
+            g.gain.setValueAtTime(0.18, t);
+            g.gain.setValueAtTime(0.18, t + dur * 0.6);
+            g.gain.linearRampToValueAtTime(0, t + dur);
+            osc.connect(g); osc.start(t); osc.stop(t + dur + 0.01);
+            osc.onended = () => { osc.disconnect(); g.disconnect(); };
+            musicNodes.push(osc);
+        }
+        for (let i = 0; i < 16; i++) {
+            const hit = drums[i];
+            if (hit === R) continue;
+            const t = startTime + i * SIXTEENTH;
+            if (hit === K) {
+                const osc = ctx.createOscillator(); osc.type = 'sine';
+                osc.frequency.setValueAtTime(160, t);
+                osc.frequency.exponentialRampToValueAtTime(40, t + 0.08);
+                const g = makeGain(0);
+                g.gain.setValueAtTime(0.20, t); g.gain.linearRampToValueAtTime(0, t + 0.10);
+                osc.connect(g); osc.start(t); osc.stop(t + 0.10);
+                osc.onended = () => { osc.disconnect(); g.disconnect(); };
+                musicNodes.push(osc);
+            } else if (hit === S) {
+                const ng = makeGain(0);
+                ng.gain.setValueAtTime(0.14, t); ng.gain.linearRampToValueAtTime(0, t + 0.08);
+                musicNodes.push(playNoise(0, t, 0.08, ng));
+                const osc = ctx.createOscillator(); osc.type = 'triangle';
+                osc.frequency.setValueAtTime(200, t); osc.frequency.linearRampToValueAtTime(120, t + 0.04);
+                const sg = makeGain(0);
+                sg.gain.setValueAtTime(0.10, t); sg.gain.linearRampToValueAtTime(0, t + 0.05);
+                osc.connect(sg); osc.start(t); osc.stop(t + 0.06);
+                osc.onended = () => { osc.disconnect(); sg.disconnect(); };
+                musicNodes.push(osc);
+            } else if (hit === H) {
+                const hg = makeGain(0);
+                hg.gain.setValueAtTime(0.06, t); hg.gain.linearRampToValueAtTime(0, t + 0.03);
+                musicNodes.push(playNoise(0, t, 0.03, hg));
+            }
+        }
+    }
+
+    function musicScheduler() {
+        if (!musicPlaying) return;
+        while (nextBarScheduleTime < ctx.currentTime + SCHEDULE_AHEAD) {
+            scheduleBar(currentBar % TOTAL_BARS, nextBarScheduleTime);
+            nextBarScheduleTime += BAR;
+            currentBar++;
+        }
+        musicSchedulerId = requestAnimationFrame(musicScheduler);
+    }
+
+    function startMusic() {
+        if (!ctx || musicPlaying) return;
+        musicPlaying = true;
+        currentBar = 0;
+        musicStartTime = ctx.currentTime + 0.05;
+        nextBarScheduleTime = musicStartTime;
+        musicScheduler();
+    }
+
+    function stopMusic() {
+        musicPlaying = false;
+        if (musicSchedulerId !== null) { cancelAnimationFrame(musicSchedulerId); musicSchedulerId = null; }
+        const now = ctx ? ctx.currentTime : 0;
+        musicNodes.forEach((node) => {
+            try { node.stop(now); } catch (_) {}
+            try { node.disconnect(); } catch (_) {}
+        });
+        musicNodes = [];
+    }
+
+    function toggleMute() {
+        if (!ctx) return false;
+        muted = !muted;
+        masterGain.gain.setValueAtTime(muted ? 0 : 1, ctx.currentTime);
+        return muted;
+    }
+
+    return {
+        init, playBark, playSquirrelHit, playPowerUp,
+        playGameOver, playBossAppear, playBossHit, playBossDefeat,
+        startMusic, stopMusic, toggleMute
+    };
+})();
+// === END AUDIO SYSTEM ===
+
+// ============================================================
+//  CONSTANTS
+// ============================================================
+
+const CANVAS_W = 800;
+const CANVAS_H = 600;
+const FPS = 60;
+const FRAME_TIME = 1000 / FPS;
+
+const STATES = {
+    TITLE: 'TITLE',
+    PLAYING: 'PLAYING',
+    GAME_OVER: 'GAME_OVER',
+    BOSS: 'BOSS',
+    WAVE_TRANSITION: 'WAVE_TRANSITION'
+};
+
+const COLORS = {
+    BG: '#111118',
+    GRASS: '#1a3a1a',
+    FENCE: '#5a3a1a',
+    TEXT: '#ffffff',
+    TEXT_GREEN: '#00ff88',
+    TEXT_YELLOW: '#ffdd44',
+    TEXT_RED: '#ff4444',
+    HUD: '#00ff88',
+    KIWI_BODY: '#d4944a',
+    KIWI_LIGHT: '#e8b06a',
+    KIWI_DARK: '#a06830',
+    KIWI_EAR: '#c07830',
+    KIWI_NOSE: '#222222',
+    KIWI_EYE: '#111111',
+    SQUIRREL_BODY: '#8a7060',
+    SQUIRREL_LIGHT: '#a08878',
+    SQUIRREL_DARK: '#6a5040',
+    SQUIRREL_TAIL: '#9a8070',
+    SQUIRREL_BELLY: '#c0a890',
+    ACORN_BODY: '#8B5E3C',
+    ACORN_CAP: '#5C3A1E',
+    BONE_GOLD: '#FFD700',
+    BONE_LIGHT: '#FFEC80',
+    TREAT_RED: '#AA3333',
+    TREAT_BROWN: '#7A4422',
+    KIWI_FRUIT_GREEN: '#6B8E23',
+    KIWI_FRUIT_LIGHT: '#9ACD32',
+    RACCOON_BODY: '#6a6a6a',
+    RACCOON_LIGHT: '#8a8a8a',
+    RACCOON_DARK: '#4a4a4a',
+    RACCOON_MASK: '#222222',
+    RACCOON_NOSE: '#333333'
+};
+
+// Gameplay tuning
+const KIWI_SPEED = 300;
+const BARK_SPEED = 400;
+const BARK_COOLDOWN = 300; // ms
+const BARK_COOLDOWN_RAPID = 100; // ms
+const ACORN_SPEED = 180;
+const POWERUP_DROP_SPEED = 100;
+const POWERUP_CHANCE = 0.10;
+const RAPID_FIRE_DURATION = 5000;
+const MAX_LIVES = 5;
+const STARTING_LIVES = 3;
+const SQUIRREL_COLS = 5;
+const SQUIRREL_ROWS_BASE = 3;
+const SQUIRREL_STEP_X = 55;
+const SQUIRREL_STEP_Y = 45;
+const SQUIRREL_MOVE_BASE = 30;
+const SQUIRREL_DROP_INTERVAL_BASE = 2000; // ms between acorn drops base
+const BOSS_HP_BASE = 15;
+const BOSS_SPEED = 120;
+const BOSS_DROP_INTERVAL = 600;
+const WAVE_TRANSITION_DURATION = 1500;
+const INVINCIBILITY_DURATION = 2000;
+const SCORE_SQUIRREL = 10;
+const SCORE_BOSS_HIT = 50;
+const SCORE_BOSS_KILL = 200;
+
+// ============================================================
+//  CANVAS & STATE
+// ============================================================
+
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const muteBtn = document.getElementById('muteBtn');
+
+let audioInitialized = false;
+let muted = false;
+
+muteBtn.addEventListener('click', () => {
+    muted = AudioSystem.toggleMute();
+    muteBtn.textContent = muted ? '\u{1F507}' : '\u{1F50A}';
+});
+
+// ============================================================
+//  INPUT HANDLING
+// ============================================================
+
+const keys = {};
+
+document.addEventListener('keydown', (e) => {
+    // Initialize audio on first keypress
+    if (!audioInitialized) {
+        AudioSystem.init();
+        audioInitialized = true;
+    }
+
+    keys[e.code] = true;
+
+    // Prevent scrolling for game keys
+    if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Space'].includes(e.code)) {
+        e.preventDefault();
+    }
+
+    // Handle enter key for state transitions
+    if (e.code === 'Enter') {
+        e.preventDefault();
+        if (game.state === STATES.TITLE) {
+            game.startGame();
+        } else if (game.state === STATES.GAME_OVER) {
+            game.resetToTitle();
+        }
+    }
+
+    // Z key triggers ZOOMIES manually
+    if (e.code === 'KeyZ' && (game.state === STATES.PLAYING || game.state === STATES.BOSS)) {
+        game.triggerZoomies();
+    }
+});
+
+document.addEventListener('keyup', (e) => {
+    keys[e.code] = false;
+});
+
+// ============================================================
+//  UTILITY FUNCTIONS
+// ============================================================
+
+function clamp(val, min, max) {
+    return Math.max(min, Math.min(max, val));
+}
+
+function rectCollide(a, b) {
+    return a.x < b.x + b.w &&
+           a.x + a.w > b.x &&
+           a.y < b.y + b.h &&
+           a.y + a.h > b.y;
+}
+
+function randInt(min, max) {
+    return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+function randFloat(min, max) {
+    return Math.random() * (max - min) + min;
+}
+
+// ============================================================
+//  PIXEL ART DRAWING FUNCTIONS
+// ============================================================
+
+function drawPixelRect(x, y, w, h, color) {
+    ctx.fillStyle = color;
+    ctx.fillRect(Math.round(x), Math.round(y), w, h);
+}
+
+// --- Kiwi (Pomeranian) sprite ---
+function drawKiwi(x, y, scale = 1, frame = 0) {
+    const s = scale;
+    const cx = x;
+    const cy = y;
+
+    // === POMERANIAN SPRITE ===
+    // Key features: puffball body, lion-like chest ruff, fox-like face,
+    // plumed tail curled UP over back, tiny erect ears, short legs hidden in fluff
+
+    // --- Plumed tail curled UP and OVER the back ---
+    // This is THE signature Pom feature - big fluffy plume arching over the body
+    ctx.fillStyle = COLORS.KIWI_BODY;
+    // Tail base curving up from back
+    ctx.beginPath();
+    ctx.moveTo(cx + 6 * s, cy - 4 * s);
+    ctx.quadraticCurveTo(cx + 14 * s, cy - 18 * s, cx + 4 * s, cy - 16 * s);
+    ctx.quadraticCurveTo(cx - 2 * s, cy - 14 * s, cx + 6 * s, cy - 4 * s);
+    ctx.fill();
+    // Fluffy tail plume (multiple overlapping circles for volume)
+    ctx.fillStyle = '#e0a050';
+    fillCircle(cx + 10 * s, cy - 14 * s, 5 * s);
+    fillCircle(cx + 6 * s, cy - 16 * s, 5 * s);
+    fillCircle(cx + 3 * s, cy - 15 * s, 4 * s);
+    ctx.fillStyle = COLORS.KIWI_LIGHT;
+    fillCircle(cx + 8 * s, cy - 16 * s, 3.5 * s);
+    fillCircle(cx + 4 * s, cy - 17 * s, 3 * s);
+
+    // --- Fluffy puffball body ---
+    // Pomeranians look like round fluffballs - fur radiates outward
+    // Outer fluff ring (darker orange)
+    ctx.fillStyle = COLORS.KIWI_BODY;
+    fillCircle(cx, cy + 4 * s, 15 * s);
+    // Fluffy fur tufts radiating outward (puffball effect)
+    const tufts = 10;
+    for (let i = 0; i < tufts; i++) {
+        const angle = (i / tufts) * Math.PI * 2 - Math.PI * 0.3;
+        const dist = 13 * s;
+        const tx = cx + Math.cos(angle) * dist;
+        const ty = cy + 4 * s + Math.sin(angle) * dist * 0.85;
+        ctx.fillStyle = i % 2 === 0 ? COLORS.KIWI_BODY : '#d89840';
+        fillCircle(tx, ty, 5 * s);
+    }
+    // Inner body fill
+    ctx.fillStyle = COLORS.KIWI_BODY;
+    fillCircle(cx, cy + 4 * s, 13 * s);
+
+    // --- Lion-like chest ruff/mane ---
+    // This massive chest fluff is what makes Poms look like tiny lions
+    ctx.fillStyle = COLORS.KIWI_LIGHT;
+    fillCircle(cx, cy + 2 * s, 11 * s);
+    // Extra chest volume
+    fillCircle(cx - 5 * s, cy + 0 * s, 7 * s);
+    fillCircle(cx + 5 * s, cy + 0 * s, 7 * s);
+    fillCircle(cx, cy + 6 * s, 8 * s);
+    // Ruff texture tufts
+    ctx.fillStyle = '#f0c878';
+    fillCircle(cx - 7 * s, cy - 1 * s, 4 * s);
+    fillCircle(cx + 7 * s, cy - 1 * s, 4 * s);
+    fillCircle(cx - 3 * s, cy + 7 * s, 4 * s);
+    fillCircle(cx + 3 * s, cy + 7 * s, 4 * s);
+    fillCircle(cx, cy + 1 * s, 5 * s);
+
+    // --- Fox-like wedge-shaped head ---
+    // Pom heads are round on top but taper to a short pointed muzzle
+    ctx.fillStyle = COLORS.KIWI_BODY;
+    fillCircle(cx, cy - 8 * s, 9 * s);
+    // Cheek fluff (Poms have very fluffy cheeks)
+    ctx.fillStyle = '#d89840';
+    fillCircle(cx - 7 * s, cy - 6 * s, 5 * s);
+    fillCircle(cx + 7 * s, cy - 6 * s, 5 * s);
+    // Top of head fluff
+    ctx.fillStyle = COLORS.KIWI_BODY;
+    fillCircle(cx, cy - 12 * s, 6 * s);
+    fillCircle(cx - 3 * s, cy - 11 * s, 5 * s);
+    fillCircle(cx + 3 * s, cy - 11 * s, 5 * s);
+
+    // --- Short pointed muzzle (fox-like) ---
+    ctx.fillStyle = COLORS.KIWI_LIGHT;
+    // Muzzle area - lighter cream/tan
+    ctx.beginPath();
+    ctx.ellipse(cx, cy - 5 * s, 5 * s, 4 * s, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // --- Small erect triangular ears (close together on top of head) ---
+    // Pom ears are TINY compared to their head fluff
+    ctx.fillStyle = COLORS.KIWI_EAR;
+    // Left ear
+    ctx.beginPath();
+    ctx.moveTo(cx - 5 * s, cy - 13 * s);
+    ctx.lineTo(cx - 3 * s, cy - 19 * s);
+    ctx.lineTo(cx - 1 * s, cy - 13 * s);
+    ctx.closePath();
+    ctx.fill();
+    // Right ear
+    ctx.beginPath();
+    ctx.moveTo(cx + 5 * s, cy - 13 * s);
+    ctx.lineTo(cx + 3 * s, cy - 19 * s);
+    ctx.lineTo(cx + 1 * s, cy - 13 * s);
+    ctx.closePath();
+    ctx.fill();
+    // Inner ear (pink)
+    ctx.fillStyle = '#e0a088';
+    ctx.beginPath();
+    ctx.moveTo(cx - 4.5 * s, cy - 13.5 * s);
+    ctx.lineTo(cx - 3 * s, cy - 17.5 * s);
+    ctx.lineTo(cx - 1.5 * s, cy - 13.5 * s);
+    ctx.closePath();
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(cx + 4.5 * s, cy - 13.5 * s);
+    ctx.lineTo(cx + 3 * s, cy - 17.5 * s);
+    ctx.lineTo(cx + 1.5 * s, cy - 13.5 * s);
+    ctx.closePath();
+    ctx.fill();
+
+    // --- Eyes (dark, bright, expressive - slightly almond-shaped) ---
+    ctx.fillStyle = '#ffffff';
+    fillCircle(cx - 4 * s, cy - 8 * s, 2.8 * s);
+    fillCircle(cx + 4 * s, cy - 8 * s, 2.8 * s);
+    ctx.fillStyle = COLORS.KIWI_EYE;
+    fillCircle(cx - 4 * s, cy - 8 * s, 1.8 * s);
+    fillCircle(cx + 4 * s, cy - 8 * s, 1.8 * s);
+    // Eye shine (bright, happy expression)
+    ctx.fillStyle = '#ffffff';
+    fillCircle(cx - 3.2 * s, cy - 8.8 * s, 0.9 * s);
+    fillCircle(cx + 4.8 * s, cy - 8.8 * s, 0.9 * s);
+
+    // --- Nose (small, black, at tip of muzzle) ---
+    ctx.fillStyle = COLORS.KIWI_NOSE;
+    fillCircle(cx, cy - 4.5 * s, 1.8 * s);
+
+    // --- Happy Pom smile with tiny tongue ---
+    ctx.strokeStyle = COLORS.KIWI_NOSE;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(cx - 1 * s, cy - 3 * s, 1.5 * s, -0.2, Math.PI * 0.7);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(cx + 1 * s, cy - 3 * s, 1.5 * s, Math.PI * 0.3, Math.PI + 0.2);
+    ctx.stroke();
+    // Tiny pink tongue poking out (classic Pom!)
+    ctx.fillStyle = '#e06080';
+    ctx.beginPath();
+    ctx.ellipse(cx, cy - 1.5 * s, 1.5 * s, 2 * s, 0, 0, Math.PI);
+    ctx.fill();
+
+    // --- Tiny feet (barely visible under fluff) ---
+    ctx.fillStyle = COLORS.KIWI_DARK;
+    fillCircle(cx - 6 * s, cy + 15 * s, 3 * s);
+    fillCircle(cx + 6 * s, cy + 15 * s, 3 * s);
+}
+
+function drawKiwiMini(x, y) {
+    drawKiwi(x, y, 0.5);
+}
+
+// --- Squirrel sprite ---
+function drawSquirrel(x, y, frame = 0) {
+    const s = 1;
+
+    // Bushy tail
+    ctx.fillStyle = COLORS.SQUIRREL_TAIL;
+    ctx.beginPath();
+    ctx.ellipse(cx(x, 0, s), cy(y, -8, s), 6 * s, 12 * s, -0.3, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Body
+    ctx.fillStyle = COLORS.SQUIRREL_BODY;
+    fillCircle(cx(x, 0, s), cy(y, 4, s), 10 * s);
+
+    // Belly
+    ctx.fillStyle = COLORS.SQUIRREL_BELLY;
+    fillCircle(cx(x, 0, s), cy(y, 6, s), 6 * s);
+
+    // Head
+    ctx.fillStyle = COLORS.SQUIRREL_BODY;
+    fillCircle(cx(x, 0, s), cy(y, -6, s), 7 * s);
+
+    // Ears
+    ctx.fillStyle = COLORS.SQUIRREL_DARK;
+    fillCircle(cx(x, -5, s), cy(y, -12, s), 3 * s);
+    fillCircle(cx(x, 5, s), cy(y, -12, s), 3 * s);
+
+    // Eyes
+    ctx.fillStyle = '#ffffff';
+    fillCircle(cx(x, -3, s), cy(y, -7, s), 2.5 * s);
+    fillCircle(cx(x, 3, s), cy(y, -7, s), 2.5 * s);
+    ctx.fillStyle = '#111111';
+    fillCircle(cx(x, -3, s), cy(y, -7, s), 1.5 * s);
+    fillCircle(cx(x, 3, s), cy(y, -7, s), 1.5 * s);
+
+    // Nose
+    ctx.fillStyle = '#553333';
+    fillCircle(cx(x, 0, s), cy(y, -4, s), 1.5 * s);
+
+    // Arms - animate between frames
+    ctx.fillStyle = COLORS.SQUIRREL_DARK;
+    if (frame === 0) {
+        // Arms down
+        drawPixelRect(x - 11, y + 0, 4, 8, COLORS.SQUIRREL_DARK);
+        drawPixelRect(x + 7, y + 0, 4, 8, COLORS.SQUIRREL_DARK);
+    } else {
+        // Arms up
+        drawPixelRect(x - 12, y - 6, 4, 8, COLORS.SQUIRREL_DARK);
+        drawPixelRect(x + 8, y - 6, 4, 8, COLORS.SQUIRREL_DARK);
+    }
+
+    // Feet
+    ctx.fillStyle = COLORS.SQUIRREL_DARK;
+    fillCircle(cx(x, -4, s), cy(y, 13, s), 3 * s);
+    fillCircle(cx(x, 4, s), cy(y, 13, s), 3 * s);
+
+    function cx(baseX, offX, scale) { return baseX + offX * scale; }
+    function cy(baseY, offY, scale) { return baseY + offY * scale; }
+}
+
+// --- Boss Raccoon ---
+function drawRaccoon(x, y, hp, maxHp) {
+    const s = 1.5;
+
+    // Body
+    ctx.fillStyle = COLORS.RACCOON_BODY;
+    ctx.beginPath();
+    ctx.ellipse(x, y + 8 * s, 22 * s, 18 * s, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Belly
+    ctx.fillStyle = COLORS.RACCOON_LIGHT;
+    ctx.beginPath();
+    ctx.ellipse(x, y + 12 * s, 14 * s, 12 * s, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Bushy tail with stripes
+    ctx.fillStyle = COLORS.RACCOON_BODY;
+    ctx.beginPath();
+    ctx.ellipse(x + 28 * s, y - 4 * s, 8 * s, 14 * s, 0.5, 0, Math.PI * 2);
+    ctx.fill();
+    // Tail stripes
+    ctx.fillStyle = COLORS.RACCOON_DARK;
+    for (let i = 0; i < 3; i++) {
+        ctx.beginPath();
+        ctx.ellipse(x + 28 * s, y + (-10 + i * 7) * s, 8 * s, 2 * s, 0.5, 0, Math.PI * 2);
+        ctx.fill();
+    }
+
+    // Head
+    ctx.fillStyle = COLORS.RACCOON_BODY;
+    fillCircle(x, y - 12 * s, 14 * s);
+
+    // Mask (the signature raccoon feature)
+    ctx.fillStyle = COLORS.RACCOON_MASK;
+    // Left mask
+    ctx.beginPath();
+    ctx.ellipse(x - 6 * s, y - 14 * s, 7 * s, 5 * s, -0.2, 0, Math.PI * 2);
+    ctx.fill();
+    // Right mask
+    ctx.beginPath();
+    ctx.ellipse(x + 6 * s, y - 14 * s, 7 * s, 5 * s, 0.2, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Light patches around eyes
+    ctx.fillStyle = COLORS.RACCOON_LIGHT;
+    fillCircle(x - 6 * s, y - 14 * s, 4 * s);
+    fillCircle(x + 6 * s, y - 14 * s, 4 * s);
+
+    // Eyes (menacing)
+    ctx.fillStyle = '#ff3333';
+    fillCircle(x - 6 * s, y - 14 * s, 3 * s);
+    fillCircle(x + 6 * s, y - 14 * s, 3 * s);
+    ctx.fillStyle = '#111';
+    fillCircle(x - 6 * s, y - 14 * s, 1.8 * s);
+    fillCircle(x + 6 * s, y - 14 * s, 1.8 * s);
+    // Eye shine
+    ctx.fillStyle = '#ff9999';
+    fillCircle(x - 5 * s, y - 15 * s, 1 * s);
+    fillCircle(x + 7 * s, y - 15 * s, 1 * s);
+
+    // Ears
+    ctx.fillStyle = COLORS.RACCOON_DARK;
+    fillCircle(x - 10 * s, y - 22 * s, 5 * s);
+    fillCircle(x + 10 * s, y - 22 * s, 5 * s);
+    ctx.fillStyle = '#999';
+    fillCircle(x - 10 * s, y - 22 * s, 3 * s);
+    fillCircle(x + 10 * s, y - 22 * s, 3 * s);
+
+    // Nose
+    ctx.fillStyle = COLORS.RACCOON_NOSE;
+    fillCircle(x, y - 8 * s, 3 * s);
+
+    // Mouth (menacing grin)
+    ctx.strokeStyle = '#333';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(x, y - 5 * s, 5 * s, 0.1, Math.PI - 0.1);
+    ctx.stroke();
+
+    // Paws
+    ctx.fillStyle = COLORS.RACCOON_DARK;
+    fillCircle(x - 16 * s, y + 22 * s, 5 * s);
+    fillCircle(x + 16 * s, y + 22 * s, 5 * s);
+
+    // Health bar
+    const barW = 80;
+    const barH = 8;
+    const barX = x - barW / 2;
+    const barY = y - 40 * s;
+    ctx.fillStyle = '#333';
+    ctx.fillRect(barX, barY, barW, barH);
+    const hpRatio = hp / maxHp;
+    ctx.fillStyle = hpRatio > 0.5 ? '#00ff44' : hpRatio > 0.25 ? '#ffaa00' : '#ff2222';
+    ctx.fillRect(barX + 1, barY + 1, (barW - 2) * hpRatio, barH - 2);
+    ctx.strokeStyle = '#666';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(barX, barY, barW, barH);
+}
+
+// --- Projectiles ---
+function drawBark(x, y) {
+    // Sound wave rings
+    ctx.strokeStyle = '#ffdd44';
+    ctx.lineWidth = 2;
+    for (let i = 0; i < 3; i++) {
+        ctx.globalAlpha = 1 - i * 0.3;
+        ctx.beginPath();
+        ctx.arc(x, y + i * 6, 4 + i * 3, Math.PI * 1.2, Math.PI * 1.8);
+        ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+
+    // "WOOF" text bubble
+    ctx.fillStyle = '#ffdd44';
+    ctx.font = 'bold 10px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('WOOF!', x, y - 6);
+}
+
+function drawAcorn(x, y) {
+    // Acorn cap
+    ctx.fillStyle = COLORS.ACORN_CAP;
+    ctx.beginPath();
+    ctx.arc(x, y - 2, 5, Math.PI, Math.PI * 2);
+    ctx.fill();
+    // Cap texture
+    ctx.fillStyle = '#4a2a0e';
+    drawPixelRect(x - 4, y - 4, 2, 2, '#4a2a0e');
+    drawPixelRect(x, y - 4, 2, 2, '#4a2a0e');
+    drawPixelRect(x - 2, y - 6, 2, 2, '#4a2a0e');
+    // Cap stem
+    ctx.fillStyle = '#3a2010';
+    drawPixelRect(x - 1, y - 7, 2, 3, '#3a2010');
+
+    // Acorn body
+    ctx.fillStyle = COLORS.ACORN_BODY;
+    ctx.beginPath();
+    ctx.ellipse(x, y + 3, 5, 6, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // Highlight
+    ctx.fillStyle = '#a07050';
+    ctx.beginPath();
+    ctx.ellipse(x - 1, y + 2, 2, 3, 0, 0, Math.PI * 2);
+    ctx.fill();
+}
+
+// --- Power-Ups ---
+function drawGoldenBone(x, y, t) {
+    const glow = 0.5 + Math.sin(t * 5) * 0.3;
+    // Glow
+    ctx.globalAlpha = glow * 0.3;
+    ctx.fillStyle = COLORS.BONE_LIGHT;
+    fillCircle(x, y, 16);
+    ctx.globalAlpha = 1;
+
+    ctx.fillStyle = COLORS.BONE_GOLD;
+    // Left knob
+    fillCircle(x - 10, y - 3, 4);
+    fillCircle(x - 10, y + 3, 4);
+    // Right knob
+    fillCircle(x + 10, y - 3, 4);
+    fillCircle(x + 10, y + 3, 4);
+    // Shaft
+    drawPixelRect(x - 10, y - 3, 20, 6, COLORS.BONE_GOLD);
+    // Highlight
+    ctx.fillStyle = COLORS.BONE_LIGHT;
+    drawPixelRect(x - 6, y - 2, 12, 2, COLORS.BONE_LIGHT);
+}
+
+function drawTreat(x, y) {
+    // Dog treat shape - biscuit
+    ctx.fillStyle = COLORS.TREAT_BROWN;
+    drawPixelRect(x - 8, y - 5, 16, 10, COLORS.TREAT_BROWN);
+    // Rounded edges
+    fillCircle(x - 8, y, 5);
+    fillCircle(x + 8, y, 5);
+    // Inner detail
+    ctx.fillStyle = COLORS.TREAT_RED;
+    drawPixelRect(x - 5, y - 3, 10, 6, COLORS.TREAT_RED);
+    // Highlight
+    ctx.fillStyle = '#cc6644';
+    drawPixelRect(x - 3, y - 2, 6, 2, '#cc6644');
+    // Heart/cross stamp
+    ctx.fillStyle = COLORS.TREAT_BROWN;
+    drawPixelRect(x - 2, y - 2, 4, 4, COLORS.TREAT_BROWN);
+}
+
+function drawKiwiFruit(x, y) {
+    // Outer circle (skin)
+    ctx.fillStyle = '#8B6914';
+    fillCircle(x, y, 10);
+    // Inner green flesh
+    ctx.fillStyle = COLORS.KIWI_FRUIT_GREEN;
+    fillCircle(x, y, 8);
+    // Lighter center
+    ctx.fillStyle = COLORS.KIWI_FRUIT_LIGHT;
+    fillCircle(x, y, 4);
+    // White center
+    ctx.fillStyle = '#eeeecc';
+    fillCircle(x, y, 2);
+    // Seeds
+    ctx.fillStyle = '#222';
+    const seedAngles = [0, 0.8, 1.6, 2.4, 3.2, 4.0, 4.8, 5.6];
+    seedAngles.forEach(a => {
+        const sx = x + Math.cos(a) * 6;
+        const sy = y + Math.sin(a) * 6;
+        fillCircle(sx, sy, 1);
+    });
+}
+
+function fillCircle(x, y, r) {
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+}
+
+// ============================================================
+//  PARTICLE SYSTEM
+// ============================================================
+
+class Particle {
+    constructor(x, y, vx, vy, color, life, size) {
+        this.x = x;
+        this.y = y;
+        this.vx = vx;
+        this.vy = vy;
+        this.color = color;
+        this.life = life;
+        this.maxLife = life;
+        this.size = size;
+    }
+
+    update(dt) {
+        this.x += this.vx * dt;
+        this.y += this.vy * dt;
+        this.vy += 100 * dt; // gravity
+        this.life -= dt;
+    }
+
+    draw() {
+        const alpha = clamp(this.life / this.maxLife, 0, 1);
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = this.color;
+        ctx.fillRect(
+            Math.round(this.x - this.size / 2),
+            Math.round(this.y - this.size / 2),
+            this.size,
+            this.size
+        );
+        ctx.globalAlpha = 1;
+    }
+
+    isDead() {
+        return this.life <= 0;
+    }
+}
+
+const particles = [];
+
+function spawnExplosion(x, y, colors, count = 12) {
+    for (let i = 0; i < count; i++) {
+        const angle = (Math.PI * 2 / count) * i + randFloat(-0.3, 0.3);
+        const speed = randFloat(60, 200);
+        const vx = Math.cos(angle) * speed;
+        const vy = Math.sin(angle) * speed - 50;
+        const color = colors[randInt(0, colors.length - 1)];
+        const life = randFloat(0.3, 0.8);
+        const size = randInt(2, 5);
+        particles.push(new Particle(x, y, vx, vy, color, life, size));
+    }
+}
+
+function spawnScreenFlash() {
+    game.screenFlash = 1.0;
+}
+
+// ============================================================
+//  ENTITY CLASSES
+// ============================================================
+
+class Kiwi {
+    constructor() {
+        this.w = 40;
+        this.h = 40;
+        this.x = CANVAS_W / 2 - this.w / 2;
+        this.y = CANVAS_H - 60;
+        this.speed = KIWI_SPEED;
+        this.lastBark = 0;
+        this.rapidFire = false;
+        this.rapidFireEnd = 0;
+        this.invincible = false;
+        this.invincibleEnd = 0;
+    }
+
+    update(dt, now) {
+        // Movement
+        if (keys['ArrowLeft']) {
+            this.x -= this.speed * dt;
+        }
+        if (keys['ArrowRight']) {
+            this.x += this.speed * dt;
+        }
+        this.x = clamp(this.x, 0, CANVAS_W - this.w);
+
+        // Rapid fire timer
+        if (this.rapidFire && now > this.rapidFireEnd) {
+            this.rapidFire = false;
+        }
+
+        // Invincibility timer
+        if (this.invincible && now > this.invincibleEnd) {
+            this.invincible = false;
+        }
+
+        // Shooting
+        const cooldown = this.rapidFire ? BARK_COOLDOWN_RAPID : BARK_COOLDOWN;
+        if (keys['Space'] && now - this.lastBark > cooldown) {
+            this.lastBark = now;
+            game.barks.push({
+                x: this.x + this.w / 2 - 5,
+                y: this.y - 10,
+                w: 10,
+                h: 16,
+                speed: BARK_SPEED
+            });
+            AudioSystem.playBark();
+        }
+    }
+
+    draw(now) {
+        // Blink when invincible
+        if (this.invincible && Math.floor(now / 100) % 2 === 0) {
+            ctx.globalAlpha = 0.4;
+        }
+        // Rapid fire glow
+        if (this.rapidFire) {
+            ctx.shadowColor = '#FFD700';
+            ctx.shadowBlur = 15;
+        }
+        drawKiwi(this.x + this.w / 2, this.y + this.h / 2 - 4);
+        ctx.shadowBlur = 0;
+        ctx.globalAlpha = 1;
+    }
+
+    getRect() {
+        return { x: this.x + 4, y: this.y + 4, w: this.w - 8, h: this.h - 8 };
+    }
+
+    makeInvincible(duration) {
+        this.invincible = true;
+        this.invincibleEnd = performance.now() + duration;
+    }
+}
+
+class Squirrel {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.w = 30;
+        this.h = 30;
+        this.alive = true;
+        this.frame = 0;
+    }
+
+    draw() {
+        if (!this.alive) return;
+        drawSquirrel(this.x + this.w / 2, this.y + this.h / 2, this.frame);
+    }
+
+    getRect() {
+        return { x: this.x, y: this.y, w: this.w, h: this.h };
+    }
+}
+
+class Boss {
+    constructor(wave) {
+        this.w = 80;
+        this.h = 70;
+        this.x = CANVAS_W / 2 - this.w / 2;
+        this.y = 30;
+        this.speed = BOSS_SPEED;
+        this.direction = 1;
+        this.maxHp = BOSS_HP_BASE + wave * 2;
+        this.hp = this.maxHp;
+        this.lastDrop = performance.now();
+        this.alive = true;
+        this.defeated = false;
+        this.defeatTimer = 0;
+    }
+
+    update(dt, now) {
+        // If defeated, count down before transitioning
+        if (this.defeated) {
+            this.defeatTimer -= dt * 1000;
+            if (this.defeatTimer <= 0) {
+                game.nextWave();
+            }
+            return;
+        }
+
+        this.x += this.speed * this.direction * dt;
+        if (this.x <= 10) {
+            this.direction = 1;
+        }
+        if (this.x + this.w >= CANVAS_W - 10) {
+            this.direction = -1;
+        }
+
+        // Drop acorns
+        if (now - this.lastDrop > BOSS_DROP_INTERVAL) {
+            this.lastDrop = now;
+            // Drop 1-3 acorns
+            const count = randInt(1, 2);
+            for (let i = 0; i < count; i++) {
+                game.acorns.push({
+                    x: this.x + randInt(10, this.w - 10),
+                    y: this.y + this.h,
+                    w: 10,
+                    h: 12,
+                    speed: ACORN_SPEED * 1.3
+                });
+            }
+        }
+    }
+
+    draw() {
+        if (!this.alive) return;
+        drawRaccoon(this.x + this.w / 2, this.y + this.h / 2 - 5, this.hp, this.maxHp);
+    }
+
+    getRect() {
+        return { x: this.x, y: this.y, w: this.w, h: this.h };
+    }
+
+    takeDamage() {
+        this.hp--;
+        AudioSystem.playBossHit();
+        spawnExplosion(
+            this.x + randInt(0, this.w),
+            this.y + randInt(0, this.h),
+            ['#ff4444', '#ffaa00', '#ffff00'],
+            6
+        );
+        if (this.hp <= 0) {
+            this.alive = false;
+            this.defeated = true;
+            this.defeatTimer = 1500;
+            AudioSystem.playBossDefeat();
+            spawnExplosion(
+                this.x + this.w / 2,
+                this.y + this.h / 2,
+                ['#ff4444', '#ffaa00', '#ffff00', '#ffffff', '#ff8800'],
+                30
+            );
+            return true; // defeated
+        }
+        return false;
+    }
+}
+
+class PowerUp {
+    constructor(x, y, type) {
+        this.x = x;
+        this.y = y;
+        this.w = 20;
+        this.h = 20;
+        this.type = type; // 'bone', 'treat', 'kiwi'
+        this.speed = POWERUP_DROP_SPEED;
+        this.spawnTime = performance.now();
+    }
+
+    update(dt) {
+        this.y += this.speed * dt;
+    }
+
+    draw() {
+        const t = (performance.now() - this.spawnTime) / 1000;
+        const cx = this.x + this.w / 2;
+        const cy = this.y + this.h / 2;
+        // Bobbing
+        const bob = Math.sin(t * 3) * 2;
+
+        if (this.type === 'bone') {
+            drawGoldenBone(cx, cy + bob, t);
+        } else if (this.type === 'treat') {
+            drawTreat(cx, cy + bob);
+        } else if (this.type === 'kiwi') {
+            drawKiwiFruit(cx, cy + bob);
+        }
+    }
+
+    getRect() {
+        return { x: this.x, y: this.y, w: this.w, h: this.h };
+    }
+
+    isOffScreen() {
+        return this.y > CANVAS_H + 20;
+    }
+}
+
+// ============================================================
+//  STARFIELD / BACKGROUND
+// ============================================================
+
+const stars = [];
+for (let i = 0; i < 80; i++) {
+    stars.push({
+        x: randInt(0, CANVAS_W),
+        y: randInt(0, CANVAS_H - 100),
+        size: randInt(1, 3),
+        brightness: randFloat(0.3, 1.0),
+        twinkleSpeed: randFloat(1, 4)
+    });
+}
+
+function drawBackground(now) {
+    // Sky
+    ctx.fillStyle = COLORS.BG;
+    ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+
+    // Stars
+    stars.forEach(star => {
+        const alpha = star.brightness * (0.5 + 0.5 * Math.sin(now / 1000 * star.twinkleSpeed));
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(star.x, star.y, star.size, star.size);
+    });
+    ctx.globalAlpha = 1;
+
+    // Grass area at bottom
+    ctx.fillStyle = COLORS.GRASS;
+    ctx.fillRect(0, CANVAS_H - 30, CANVAS_W, 30);
+    // Grass blades
+    ctx.fillStyle = '#2a5a2a';
+    for (let i = 0; i < CANVAS_W; i += 8) {
+        const h = 5 + Math.sin(i * 0.5 + now / 500) * 3;
+        ctx.fillRect(i, CANVAS_H - 30 - h, 3, h);
+    }
+
+    // Fence
+    ctx.fillStyle = COLORS.FENCE;
+    const fenceY = CANVAS_H - 35;
+    // Horizontal bars
+    ctx.fillRect(0, fenceY - 15, CANVAS_W, 4);
+    ctx.fillRect(0, fenceY - 5, CANVAS_W, 4);
+    // Vertical posts
+    for (let i = 0; i < CANVAS_W; i += 60) {
+        ctx.fillRect(i, fenceY - 25, 6, 25);
+        // Pointed top
+        ctx.beginPath();
+        ctx.moveTo(i, fenceY - 25);
+        ctx.lineTo(i + 3, fenceY - 30);
+        ctx.lineTo(i + 6, fenceY - 25);
+        ctx.closePath();
+        ctx.fill();
+    }
+}
+
+// ============================================================
+//  TEXT RENDERING (Retro style)
+// ============================================================
+
+function drawRetroText(text, x, y, size, color, align = 'center') {
+    ctx.fillStyle = color;
+    ctx.font = `bold ${size}px monospace`;
+    ctx.textAlign = align;
+    ctx.textBaseline = 'middle';
+
+    // Shadow
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.fillText(text, x + 2, y + 2);
+
+    // Main text
+    ctx.fillStyle = color;
+    ctx.fillText(text, x, y);
+}
+
+function drawBlockText(text, x, y, scale, color) {
+    // Draw chunky pixel-style text
+    ctx.fillStyle = color;
+    ctx.font = `bold ${scale}px monospace`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    // Multiple layers for thickness
+    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+    ctx.fillText(text, x + 3, y + 3);
+    ctx.fillStyle = color;
+    ctx.fillText(text, x, y);
+    // Highlight
+    ctx.globalAlpha = 0.3;
+    ctx.fillText(text, x, y - 1);
+    ctx.globalAlpha = 1;
+}
+
+// ============================================================
+//  GAME STATE
+// ============================================================
+
+const game = {
+    state: STATES.TITLE,
+    score: 0,
+    highScore: parseInt(localStorage.getItem('kiwiBarkBlasterHigh') || '0'),
+    lives: STARTING_LIVES,
+    wave: 1,
+    kiwi: null,
+    squirrels: [],
+    boss: null,
+    barks: [],
+    acorns: [],
+    powerUps: [],
+    squirrelDirection: 1,
+    squirrelSpeed: SQUIRREL_MOVE_BASE,
+    squirrelMoveTimer: 0,
+    squirrelAnimTimer: 0,
+    squirrelFrame: 0,
+    squirrelDropTimer: 0,
+    screenFlash: 0,
+    waveTransitionTimer: 0,
+    waveWarningTimer: 0,
+    titleAnimTimer: 0,
+    gameOverNewHigh: false,
+
+    // ZOOMIES MODE
+    zoomiesActive: false,
+    zoomiesEnd: 0,
+    zoomiesDirection: 1,
+    zoomiesDirChangeTimer: 0,
+    zoomiesAfterimages: [], // [{x, y, alpha, scale}]
+    zoomiesAutoFireTimer: 0,
+    zoomiesShake: {x: 0, y: 0},
+    zoomiesTimer: 0, // time since last random zoomies
+    zoomiesTriggered: false,
+
+    startGame() {
+        this.state = STATES.PLAYING;
+        this.score = 0;
+        this.lives = STARTING_LIVES;
+        this.wave = 1;
+        this.kiwi = new Kiwi();
+        this.barks = [];
+        this.acorns = [];
+        this.powerUps = [];
+        this.boss = null;
+        this.gameOverNewHigh = false;
+        this.spawnWave();
+        AudioSystem.startMusic();
+    },
+
+    resetToTitle() {
+        this.state = STATES.TITLE;
+        this.barks = [];
+        this.acorns = [];
+        this.powerUps = [];
+        this.squirrels = [];
+        this.boss = null;
+    },
+
+    spawnWave() {
+        this.squirrels = [];
+        this.barks = [];
+        this.acorns = [];
+        this.powerUps = [];
+
+        // Every 3rd wave is a boss wave
+        if (this.wave % 3 === 0) {
+            this.state = STATES.WAVE_TRANSITION;
+            this.waveTransitionTimer = performance.now();
+            this.waveWarningTimer = performance.now();
+            return;
+        }
+
+        const rows = Math.min(SQUIRREL_ROWS_BASE + Math.floor((this.wave - 1) / 2), 6);
+        const cols = SQUIRREL_COLS;
+        const startX = (CANVAS_W - cols * SQUIRREL_STEP_X) / 2 + 15;
+        const startY = 60;
+
+        for (let r = 0; r < rows; r++) {
+            for (let c = 0; c < cols; c++) {
+                this.squirrels.push(new Squirrel(
+                    startX + c * SQUIRREL_STEP_X,
+                    startY + r * SQUIRREL_STEP_Y
+                ));
+            }
+        }
+
+        this.squirrelDirection = 1;
+        this.squirrelSpeed = SQUIRREL_MOVE_BASE + this.wave * 5;
+        this.squirrelMoveTimer = 0;
+        this.squirrelDropTimer = 0;
+
+        this.state = STATES.WAVE_TRANSITION;
+        this.waveTransitionTimer = performance.now();
+    },
+
+    startBossWave() {
+        this.boss = new Boss(this.wave);
+        this.state = STATES.BOSS;
+        this.barks = [];
+        this.acorns = [];
+        this.powerUps = [];
+        AudioSystem.playBossAppear();
+    },
+
+    nextWave() {
+        this.wave++;
+        this.spawnWave();
+    },
+
+    loseLife() {
+        if (this.kiwi.invincible) return;
+        this.lives--;
+        this.kiwi.makeInvincible(INVINCIBILITY_DURATION);
+        spawnExplosion(
+            this.kiwi.x + this.kiwi.w / 2,
+            this.kiwi.y + this.kiwi.h / 2,
+            ['#ff4444', '#ff8800', '#ffff00'],
+            15
+        );
+        if (this.lives <= 0) {
+            this.gameOver();
+        }
+    },
+
+    gameOver() {
+        this.state = STATES.GAME_OVER;
+        AudioSystem.stopMusic();
+        AudioSystem.playGameOver();
+        if (this.score > this.highScore) {
+            this.highScore = this.score;
+            localStorage.setItem('kiwiBarkBlasterHigh', this.highScore.toString());
+            this.gameOverNewHigh = true;
+        }
+    },
+
+    collectPowerUp(powerUp) {
+        AudioSystem.playPowerUp();
+        switch (powerUp.type) {
+            case 'bone':
+                this.kiwi.rapidFire = true;
+                this.kiwi.rapidFireEnd = performance.now() + RAPID_FIRE_DURATION;
+                break;
+            case 'treat':
+                if (this.lives < MAX_LIVES) {
+                    this.lives++;
+                }
+                break;
+            case 'kiwi':
+                // Screen clear bomb
+                spawnScreenFlash();
+                const alive = this.squirrels.filter(s => s.alive);
+                alive.forEach(s => {
+                    s.alive = false;
+                    this.score += SCORE_SQUIRREL;
+                    spawnExplosion(
+                        s.x + s.w / 2,
+                        s.y + s.h / 2,
+                        [COLORS.KIWI_FRUIT_GREEN, COLORS.KIWI_FRUIT_LIGHT, '#ffffff'],
+                        6
+                    );
+                });
+                break;
+        }
+        // 15% chance any power-up triggers ZOOMIES
+        if (Math.random() < 0.15) {
+            this.triggerZoomies();
+        }
+    },
+
+    triggerZoomies() {
+        if (this.zoomiesActive) return;
+        this.zoomiesActive = true;
+        this.zoomiesEnd = performance.now() + 4000;
+        this.zoomiesDirection = Math.random() < 0.5 ? -1 : 1;
+        this.zoomiesDirChangeTimer = 0;
+        this.zoomiesAfterimages = [];
+        this.zoomiesAutoFireTimer = 0;
+        this.kiwi.invincible = true;
+        this.kiwi.invincibleEnd = performance.now() + 4200;
+        // Play a rapid series of barks to announce zoomies
+        AudioSystem.playPowerUp();
+    },
+
+    maybeDropPowerUp(x, y) {
+        if (Math.random() < POWERUP_CHANCE) {
+            const types = ['bone', 'treat', 'kiwi'];
+            // Weighted: bone 50%, treat 30%, kiwi 20%
+            const r = Math.random();
+            let type;
+            if (r < 0.5) type = 'bone';
+            else if (r < 0.8) type = 'treat';
+            else type = 'kiwi';
+            this.powerUps.push(new PowerUp(x - 10, y - 10, type));
+        }
+    }
+};
+
+// ============================================================
+//  UPDATE FUNCTIONS
+// ============================================================
+
+function updateZoomies(dt, now, g) {
+    if (!g.zoomiesActive) {
+        // Random zoomies trigger every ~40-60 seconds
+        g.zoomiesTimer += dt;
+        if (g.zoomiesTimer > 45 + Math.random() * 15) {
+            g.zoomiesTimer = 0;
+            g.triggerZoomies();
+        }
+        return;
+    }
+
+    // Check if zoomies ended
+    if (now > g.zoomiesEnd) {
+        g.zoomiesActive = false;
+        g.zoomiesAfterimages = [];
+        g.zoomiesShake = {x: 0, y: 0};
+        return;
+    }
+
+    // Override Kiwi movement — uncontrollable zoomies!
+    g.zoomiesDirChangeTimer += dt;
+    if (g.zoomiesDirChangeTimer > 0.25) {
+        g.zoomiesDirChangeTimer = 0;
+        // Random sharp direction changes
+        g.zoomiesDirection = Math.random() < 0.5 ? -1 : 1;
+    }
+
+    g.kiwi.x += g.zoomiesDirection * KIWI_SPEED * 3 * dt;
+    // Bounce off walls
+    if (g.kiwi.x <= 0) { g.kiwi.x = 0; g.zoomiesDirection = 1; }
+    if (g.kiwi.x >= CANVAS_W - g.kiwi.w) { g.kiwi.x = CANVAS_W - g.kiwi.w; g.zoomiesDirection = -1; }
+
+    // Auto-fire in spread pattern
+    g.zoomiesAutoFireTimer += dt;
+    if (g.zoomiesAutoFireTimer > 0.06) {
+        g.zoomiesAutoFireTimer = 0;
+        // Spray barks: up, up-left, up-right
+        const cx = g.kiwi.x + g.kiwi.w / 2;
+        const cy = g.kiwi.y;
+        const angles = [-0.3, 0, 0.3];
+        const angle = angles[Math.floor(Math.random() * angles.length)];
+        g.barks.push({
+            x: cx - 5 + angle * 30,
+            y: cy - 10,
+            w: 10, h: 16,
+            speed: BARK_SPEED * 1.5,
+            angle: angle
+        });
+        AudioSystem.playBark();
+    }
+
+    // Add afterimage trail
+    g.zoomiesAfterimages.push({
+        x: g.kiwi.x + g.kiwi.w / 2,
+        y: g.kiwi.y + g.kiwi.h / 2,
+        alpha: 0.6,
+        hue: (now * 0.5) % 360
+    });
+    // Fade and remove old afterimages
+    g.zoomiesAfterimages = g.zoomiesAfterimages.filter(a => {
+        a.alpha -= dt * 2;
+        return a.alpha > 0;
+    });
+
+    // Screen shake
+    g.zoomiesShake.x = (Math.random() - 0.5) * 8;
+    g.zoomiesShake.y = (Math.random() - 0.5) * 6;
+}
+
+function updatePlaying(dt, now) {
+    const g = game;
+
+    // Update Kiwi
+    g.kiwi.update(dt, now);
+
+    // ZOOMIES update (overrides kiwi movement when active)
+    updateZoomies(dt, now, g);
+
+    // Update barks (handle angled zoomies barks)
+    g.barks.forEach(b => {
+        b.y -= b.speed * dt;
+        if (b.angle) b.x += b.angle * b.speed * dt;
+    });
+    g.barks = g.barks.filter(b => b.y > -20);
+
+    // Update acorns
+    g.acorns.forEach(a => {
+        a.y += a.speed * dt;
+    });
+    g.acorns = g.acorns.filter(a => a.y < CANVAS_H + 20);
+
+    // Update power-ups
+    g.powerUps.forEach(p => p.update(dt));
+    g.powerUps = g.powerUps.filter(p => !p.isOffScreen());
+
+    // Squirrel animation
+    g.squirrelAnimTimer += dt;
+    if (g.squirrelAnimTimer > 0.5) {
+        g.squirrelAnimTimer = 0;
+        g.squirrelFrame = 1 - g.squirrelFrame;
+        g.squirrels.forEach(s => {
+            if (s.alive) s.frame = g.squirrelFrame;
+        });
+    }
+
+    // Move squirrels
+    const alive = g.squirrels.filter(s => s.alive);
+    if (alive.length === 0) {
+        g.nextWave();
+        return;
+    }
+
+    // Speed increases as fewer remain
+    const speedMult = 1 + (1 - alive.length / g.squirrels.length) * 2;
+    const moveAmount = g.squirrelSpeed * speedMult * dt;
+
+    let hitEdge = false;
+    alive.forEach(s => {
+        s.x += moveAmount * g.squirrelDirection;
+        if (s.x + s.w >= CANVAS_W - 5 || s.x <= 5) {
+            hitEdge = true;
+        }
+    });
+
+    if (hitEdge) {
+        g.squirrelDirection *= -1;
+        alive.forEach(s => {
+            s.y += 10;
+            // Check if squirrels reached Kiwi's level
+            if (s.y + s.h >= g.kiwi.y) {
+                g.gameOver();
+                return;
+            }
+        });
+    }
+
+    // Squirrels drop acorns
+    g.squirrelDropTimer += dt;
+    const dropInterval = Math.max(0.3, (SQUIRREL_DROP_INTERVAL_BASE / 1000) - g.wave * 0.1);
+    if (g.squirrelDropTimer > dropInterval && alive.length > 0) {
+        g.squirrelDropTimer = 0;
+        const shooter = alive[randInt(0, alive.length - 1)];
+        g.acorns.push({
+            x: shooter.x + shooter.w / 2 - 5,
+            y: shooter.y + shooter.h,
+            w: 10,
+            h: 12,
+            speed: ACORN_SPEED + g.wave * 10
+        });
+    }
+
+    // Collision: barks vs squirrels
+    g.barks = g.barks.filter(bark => {
+        let hit = false;
+        alive.forEach(sq => {
+            if (sq.alive && rectCollide(bark, sq.getRect())) {
+                sq.alive = false;
+                hit = true;
+                g.score += SCORE_SQUIRREL;
+                AudioSystem.playSquirrelHit();
+                spawnExplosion(
+                    sq.x + sq.w / 2,
+                    sq.y + sq.h / 2,
+                    [COLORS.SQUIRREL_BODY, COLORS.SQUIRREL_LIGHT, '#ffaa44', '#ffdd88'],
+                    10
+                );
+                g.maybeDropPowerUp(sq.x + sq.w / 2, sq.y + sq.h / 2);
+            }
+        });
+        return !hit;
+    });
+
+    // Collision: acorns vs Kiwi
+    const kiwiRect = g.kiwi.getRect();
+    g.acorns = g.acorns.filter(acorn => {
+        if (rectCollide(acorn, kiwiRect)) {
+            g.loseLife();
+            return false;
+        }
+        return true;
+    });
+
+    // Collision: Kiwi vs power-ups
+    g.powerUps = g.powerUps.filter(p => {
+        if (rectCollide(p.getRect(), kiwiRect)) {
+            g.collectPowerUp(p);
+            return false;
+        }
+        return true;
+    });
+}
+
+function updateBoss(dt, now) {
+    const g = game;
+
+    g.kiwi.update(dt, now);
+    updateZoomies(dt, now, g);
+
+    // Update boss (keep updating even when defeated for the defeat timer)
+    if (g.boss) {
+        g.boss.update(dt, now);
+    }
+
+    // Update barks
+    g.barks.forEach(b => {
+        b.y -= b.speed * dt;
+        if (b.angle) b.x += b.angle * b.speed * dt;
+    });
+    g.barks = g.barks.filter(b => b.y > -20);
+
+    // Update acorns
+    g.acorns.forEach(a => {
+        a.y += a.speed * dt;
+    });
+    g.acorns = g.acorns.filter(a => a.y < CANVAS_H + 20);
+
+    // Update power-ups
+    g.powerUps.forEach(p => p.update(dt));
+    g.powerUps = g.powerUps.filter(p => !p.isOffScreen());
+
+    // Collision: barks vs boss
+    if (g.boss && g.boss.alive) {
+        g.barks = g.barks.filter(bark => {
+            if (rectCollide(bark, g.boss.getRect())) {
+                g.score += SCORE_BOSS_HIT;
+                const defeated = g.boss.takeDamage();
+                if (defeated) {
+                    g.score += SCORE_BOSS_KILL;
+                    // Drop power-up on boss defeat
+                    g.powerUps.push(new PowerUp(
+                        g.boss.x + g.boss.w / 2 - 10,
+                        g.boss.y + g.boss.h / 2 - 10,
+                        'treat'
+                    ));
+                    // Boss handles its own defeat timer and calls nextWave
+                }
+                return false;
+            }
+            return true;
+        });
+    }
+
+    // Collision: acorns vs Kiwi
+    const kiwiRect = g.kiwi.getRect();
+    g.acorns = g.acorns.filter(acorn => {
+        if (rectCollide(acorn, kiwiRect)) {
+            g.loseLife();
+            return false;
+        }
+        return true;
+    });
+
+    // Collision: Kiwi vs power-ups
+    g.powerUps = g.powerUps.filter(p => {
+        if (rectCollide(p.getRect(), kiwiRect)) {
+            g.collectPowerUp(p);
+            return false;
+        }
+        return true;
+    });
+}
+
+function updateParticles(dt) {
+    for (let i = particles.length - 1; i >= 0; i--) {
+        particles[i].update(dt);
+        if (particles[i].isDead()) {
+            particles.splice(i, 1);
+        }
+    }
+}
+
+// ============================================================
+//  DRAW FUNCTIONS
+// ============================================================
+
+function drawHUD() {
+    const g = game;
+
+    // Score
+    drawRetroText(`SCORE: ${g.score}`, 10, 20, 16, COLORS.HUD, 'left');
+
+    // High Score
+    drawRetroText(`HI: ${g.highScore}`, CANVAS_W / 2, 20, 16, COLORS.TEXT_YELLOW, 'center');
+
+    // Wave
+    drawRetroText(`WAVE ${g.wave}`, CANVAS_W - 10, 20, 16, COLORS.HUD, 'right');
+
+    // Lives (as mini Kiwis)
+    for (let i = 0; i < g.lives; i++) {
+        drawKiwiMini(20 + i * 28, CANVAS_H - 16);
+    }
+
+    // Rapid fire indicator
+    if (g.kiwi && g.kiwi.rapidFire) {
+        const remaining = Math.max(0, (g.kiwi.rapidFireEnd - performance.now()) / 1000);
+        drawRetroText(`RAPID FIRE! ${remaining.toFixed(1)}s`, CANVAS_W / 2, 40, 12, COLORS.BONE_GOLD, 'center');
+    }
+}
+
+function drawTitleScreen(now) {
+    const t = now / 1000;
+
+    // Animated background squirrels
+    for (let i = 0; i < 5; i++) {
+        const sx = (i * 160 + (now / 20) % 800) % 880 - 40;
+        const sy = 120 + Math.sin(t * 2 + i) * 20;
+        ctx.globalAlpha = 0.3;
+        drawSquirrel(sx, sy, Math.floor(t * 2) % 2);
+        ctx.globalAlpha = 1;
+    }
+
+    // Title
+    const titleY = 160 + Math.sin(t * 1.5) * 5;
+    drawBlockText("KIWI'S", CANVAS_W / 2, titleY - 30, 48, COLORS.TEXT_YELLOW);
+    drawBlockText("BARK BLASTER", CANVAS_W / 2, titleY + 30, 42, COLORS.TEXT_GREEN);
+
+    // Kiwi sprite - large and centered
+    drawKiwi(CANVAS_W / 2, 320, 2.5);
+
+    // Flashing "Press ENTER" text
+    if (Math.floor(t * 2) % 2 === 0) {
+        drawRetroText('PRESS ENTER TO START', CANVAS_W / 2, 440, 20, COLORS.TEXT, 'center');
+    }
+
+    // High score
+    drawRetroText(`HIGH SCORE: ${game.highScore}`, CANVAS_W / 2, 490, 16, COLORS.TEXT_YELLOW, 'center');
+
+    // Controls
+    drawRetroText('\u2190 \u2192 MOVE   SPACE BARK   Z ZOOMIES   ENTER START', CANVAS_W / 2, 520, 12, '#888888', 'center');
+
+    // Credits
+    drawRetroText('DEFEND THE BACKYARD FROM SQUIRREL INVADERS!', CANVAS_W / 2, 545, 11, '#666666', 'center');
+}
+
+function drawWaveTransition(now) {
+    const g = game;
+    const elapsed = now - g.waveTransitionTimer;
+
+    if (g.wave % 3 === 0) {
+        // Boss warning
+        const flash = Math.floor(elapsed / 200) % 2;
+        if (flash) {
+            drawBlockText('WARNING!', CANVAS_W / 2, CANVAS_H / 2 - 30, 36, COLORS.TEXT_RED);
+            drawBlockText('GIANT RACCOON APPROACHING!', CANVAS_W / 2, CANVAS_H / 2 + 20, 24, COLORS.TEXT_YELLOW);
+        }
+    } else {
+        drawBlockText(`WAVE ${g.wave}`, CANVAS_W / 2, CANVAS_H / 2, 48, COLORS.TEXT_GREEN);
+    }
+
+    if (elapsed > WAVE_TRANSITION_DURATION) {
+        if (g.wave % 3 === 0) {
+            g.startBossWave();
+        } else {
+            g.state = STATES.PLAYING;
+        }
+    }
+}
+
+function drawGameOverScreen(now) {
+    const t = now / 1000;
+
+    drawBlockText('GAME OVER', CANVAS_W / 2, CANVAS_H / 2 - 60, 48, COLORS.TEXT_RED);
+
+    drawRetroText(`FINAL SCORE: ${game.score}`, CANVAS_W / 2, CANVAS_H / 2, 24, COLORS.TEXT, 'center');
+
+    drawRetroText(`WAVE REACHED: ${game.wave}`, CANVAS_W / 2, CANVAS_H / 2 + 35, 16, COLORS.TEXT, 'center');
+
+    if (game.gameOverNewHigh) {
+        const color = Math.floor(t * 4) % 2 === 0 ? COLORS.TEXT_YELLOW : COLORS.TEXT_GREEN;
+        drawBlockText('NEW HIGH SCORE!', CANVAS_W / 2, CANVAS_H / 2 + 75, 28, color);
+    }
+
+    if (Math.floor(t * 2) % 2 === 0) {
+        drawRetroText('PRESS ENTER TO RESTART', CANVAS_W / 2, CANVAS_H / 2 + 130, 18, COLORS.TEXT, 'center');
+    }
+}
+
+function drawScreenFlash(dt) {
+    if (game.screenFlash > 0) {
+        ctx.globalAlpha = game.screenFlash;
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+        ctx.globalAlpha = 1;
+        game.screenFlash -= dt * 3;
+        if (game.screenFlash < 0) game.screenFlash = 0;
+    }
+}
+
+// ============================================================
+//  MAIN GAME LOOP
+// ============================================================
+
+let lastTime = performance.now();
+
+function gameLoop(timestamp) {
+    const now = timestamp;
+    let dt = (now - lastTime) / 1000;
+    lastTime = now;
+
+    // Clamp dt to avoid spiral of death
+    dt = Math.min(dt, 0.05);
+
+    // --- UPDATE ---
+    switch (game.state) {
+        case STATES.PLAYING:
+            updatePlaying(dt, now);
+            break;
+        case STATES.BOSS:
+            updateBoss(dt, now);
+            break;
+        case STATES.WAVE_TRANSITION:
+            // Just wait and draw, Kiwi can still move
+            if (game.kiwi) game.kiwi.update(dt, now);
+            break;
+    }
+
+    updateParticles(dt);
+
+    // --- DRAW ---
+    // Screen shake from zoomies
+    if (game.zoomiesActive) {
+        ctx.save();
+        ctx.translate(game.zoomiesShake.x, game.zoomiesShake.y);
+    }
+
+    // Clear
+    ctx.clearRect(0, 0, CANVAS_W, CANVAS_H);
+
+    // Background
+    drawBackground(now);
+
+    switch (game.state) {
+        case STATES.TITLE:
+            drawTitleScreen(now);
+            break;
+
+        case STATES.PLAYING:
+            // Draw squirrels
+            game.squirrels.forEach(s => s.draw());
+            // Draw barks
+            game.barks.forEach(b => drawBark(b.x + b.w / 2, b.y));
+            // Draw acorns
+            game.acorns.forEach(a => drawAcorn(a.x + a.w / 2, a.y + a.h / 2));
+            // Draw power-ups
+            game.powerUps.forEach(p => p.draw());
+            // Draw Kiwi
+            game.kiwi.draw(now);
+            // HUD
+            drawHUD();
+            break;
+
+        case STATES.BOSS:
+            // Draw boss
+            if (game.boss) game.boss.draw();
+            // Draw barks
+            game.barks.forEach(b => drawBark(b.x + b.w / 2, b.y));
+            // Draw acorns
+            game.acorns.forEach(a => drawAcorn(a.x + a.w / 2, a.y + a.h / 2));
+            // Draw power-ups
+            game.powerUps.forEach(p => p.draw());
+            // Draw Kiwi
+            game.kiwi.draw(now);
+            // HUD
+            drawHUD();
+            break;
+
+        case STATES.WAVE_TRANSITION:
+            // Still draw existing entities
+            game.squirrels.forEach(s => s.draw());
+            if (game.kiwi) game.kiwi.draw(now);
+            drawHUD();
+            drawWaveTransition(now);
+            break;
+
+        case STATES.GAME_OVER:
+            drawGameOverScreen(now);
+            break;
+    }
+
+    // Particles (always on top)
+    particles.forEach(p => p.draw());
+
+    // Screen flash (always on top)
+    drawScreenFlash(dt);
+
+    // ZOOMIES visual effects
+    if (game.zoomiesActive) {
+        // Draw rainbow afterimages
+        game.zoomiesAfterimages.forEach(a => {
+            ctx.globalAlpha = a.alpha * 0.5;
+            ctx.fillStyle = `hsl(${a.hue}, 100%, 60%)`;
+            ctx.beginPath();
+            ctx.arc(a.x, a.y, 18 + a.alpha * 10, 0, Math.PI * 2);
+            ctx.fill();
+        });
+        ctx.globalAlpha = 1;
+
+        // Spinning "ZOOMIES!!!" text
+        const elapsed = (performance.now() - (game.zoomiesEnd - 4000)) / 1000;
+        const spin = elapsed * 3;
+        const bounce = Math.sin(elapsed * 12) * 15;
+        const scale = 1.5 + Math.sin(elapsed * 8) * 0.3;
+        ctx.save();
+        ctx.translate(CANVAS_W / 2, CANVAS_H / 2 + bounce);
+        ctx.rotate(Math.sin(spin) * 0.15);
+        ctx.scale(scale, scale);
+        // Rainbow cycling text
+        const hue = (now * 0.3) % 360;
+        ctx.fillStyle = `hsl(${hue}, 100%, 60%)`;
+        ctx.strokeStyle = '#000';
+        ctx.lineWidth = 4;
+        ctx.font = 'bold 36px monospace';
+        ctx.textAlign = 'center';
+        ctx.strokeText('ZOOMIES!!!', 0, 0);
+        ctx.fillText('ZOOMIES!!!', 0, 0);
+        ctx.restore();
+
+        // Rainbow border flash
+        ctx.strokeStyle = `hsl(${hue}, 100%, 50%)`;
+        ctx.lineWidth = 4;
+        ctx.strokeRect(2, 2, CANVAS_W - 4, CANVAS_H - 4);
+
+        // End screen shake transform
+        ctx.restore();
+    }
+
+    // Scanline effect on canvas (supplementing CSS)
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.03)';
+    for (let y = 0; y < CANVAS_H; y += 3) {
+        ctx.fillRect(0, y, CANVAS_W, 1);
+    }
+
+    requestAnimationFrame(gameLoop);
+}
+
+// ============================================================
+//  START
+// ============================================================
+
+requestAnimationFrame(gameLoop);
+
+</script>
+</body>
+</html>
