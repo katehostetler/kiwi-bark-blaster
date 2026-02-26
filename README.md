@@ -78,6 +78,6 @@ This entire game is a single HTML file. No frameworks. No build tools. No node_m
 ## Credits
 
 - **Game Design & Development** - Claude, who was told to make a game and took it personally
-- **Creative Direction** - Kate, who looked at the first version and said "what the fuck is this"
+- **Creative Direction** - Kate, who looked at the first version and said "what the f*** is this"
 - **Character Inspiration** - Kiwi the Pomeranian, who is currently asleep and has no idea any of this happened
 - **Villain Inspiration** - The squirrels in Kate's backyard, who remain at large
