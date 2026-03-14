@@ -138,14 +138,16 @@
     @media (pointer: coarse), (hover: none) {
         #touchControls {
             display: block;
+            padding: 16px 16px;
+            padding-bottom: max(16px, env(safe-area-inset-bottom));
         }
         body {
             justify-content: flex-start;
         }
         #gameCanvas {
             width: 100vw;
-            height: calc(100vh - 120px);
-            height: calc(100dvh - 120px);
+            height: calc(100vh - 160px);
+            height: calc(100dvh - 160px);
             border: none;
             box-shadow: none;
         }
@@ -248,6 +250,8 @@ const AudioSystem = (function () {
         Eb3: 51, Bb3: 58, Eb4: 63, Bb4: 70, Ab4: 68, Eb5: 75, Bb5: 82,
     };
 
+    let resumePromise = null;
+
     function init() {
         if (!ctx) {
             ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -258,7 +262,7 @@ const AudioSystem = (function () {
         // Always try to resume — iOS suspends the context and requires
         // resume() to be called from a direct user gesture each time
         if (ctx.state === 'suspended') {
-            ctx.resume();
+            resumePromise = ctx.resume().then(() => { resumePromise = null; });
         }
     }
 
@@ -569,16 +573,12 @@ const AudioSystem = (function () {
 
     function startMusic() {
         if (!ctx || musicPlaying) return;
-        // Ensure audio context is running (critical for iOS)
-        if (ctx.state === 'suspended') {
-            ctx.resume().then(() => {
-                if (!musicPlaying) startMusicInternal();
+        // If audio context is suspended or a resume is in progress, wait for it
+        if (ctx.state !== 'running' || resumePromise) {
+            const pending = resumePromise || (ctx.state === 'suspended' ? ctx.resume() : Promise.resolve());
+            pending.then(() => {
+                if (!musicPlaying && ctx.state === 'running') startMusicInternal();
             });
-            // Also try immediately in case resume is synchronous
-            if (ctx.state === 'running') {
-                startMusicInternal();
-                return;
-            }
             return;
         }
         startMusicInternal();
@@ -681,7 +681,10 @@ const COLORS = {
     MAILMAN_SKIN: '#DDB888',
     MAILMAN_HAT: '#2244AA',
     PACKAGE_BROWN: '#8B6914',
-    PACKAGE_LIGHT: '#C49A3C'
+    PACKAGE_LIGHT: '#C49A3C',
+    KAME_CORE: '#66DDFF',
+    KAME_GLOW: '#0088FF',
+    KAME_OUTER: '#AAEEFF'
 };
 
 // Gameplay tuning
@@ -731,6 +734,10 @@ const BIRD_DROP_INTERVAL = 3000; // ms
 const BEE_DROP_INTERVAL = 2500; // ms
 const MAILMAN_THROW_INTERVAL = 2000; // ms
 
+// Kamehameha / Mega Bark
+const KAMEHAMEHA_DURATION = 2500; // ms for the beam
+const KAMEHAMEHA_CHARGE_TIME = 800; // ms charge-up before beam fires
+
 // ============================================================
 //  CANVAS & STATE
 // ============================================================
@@ -745,7 +752,7 @@ const muteBtn = document.getElementById('muteBtn');
     const touch = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
     const portrait = window.innerHeight > window.innerWidth;
     if (touch && portrait) {
-        const touchControlsHeight = 120;
+        const touchControlsHeight = 160;
         const screenW = window.innerWidth;
         const screenH = window.innerHeight - touchControlsHeight;
         // Scale so width stays at 800 internal pixels, height adjusts to match aspect ratio
@@ -753,6 +760,8 @@ const muteBtn = document.getElementById('muteBtn');
         canvas.width = CANVAS_W;
         canvas.height = CANVAS_H;
     }
+    // Mobile scale factor — makes Kiwi and key elements bigger on touch devices
+    window.MOBILE_SCALE = touch ? 1.6 : 1;
 })();
 
 let audioInitialized = false;
@@ -1563,6 +1572,36 @@ function drawStinger(x, y) {
     ctx.fill();
 }
 
+function drawMegaBarkIcon(x, y, t) {
+    // Glowing energy ball icon
+    const pulse = 1 + Math.sin(t * 6) * 0.2;
+    // Outer glow
+    ctx.globalAlpha = 0.4;
+    ctx.fillStyle = COLORS.KAME_GLOW;
+    ctx.beginPath();
+    ctx.arc(x, y, 11 * pulse, 0, Math.PI * 2);
+    ctx.fill();
+    // Core
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = COLORS.KAME_CORE;
+    ctx.beginPath();
+    ctx.arc(x, y, 7 * pulse, 0, Math.PI * 2);
+    ctx.fill();
+    // White center
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(x, y - 1, 3, 0, Math.PI * 2);
+    ctx.fill();
+    // Energy sparks
+    for (let i = 0; i < 4; i++) {
+        const a = t * 4 + (Math.PI * 2 / 4) * i;
+        ctx.fillStyle = COLORS.KAME_OUTER;
+        ctx.beginPath();
+        ctx.arc(x + Math.cos(a) * 10 * pulse, y + Math.sin(a) * 10 * pulse, 2, 0, Math.PI * 2);
+        ctx.fill();
+    }
+}
+
 function fillCircle(x, y, r) {
     ctx.beginPath();
     ctx.arc(x, y, r, 0, Math.PI * 2);
@@ -1635,8 +1674,10 @@ function spawnScreenFlash() {
 
 class Kiwi {
     constructor() {
-        this.w = 40;
-        this.h = 40;
+        const ms = window.MOBILE_SCALE || 1;
+        this.w = Math.round(40 * ms);
+        this.h = Math.round(40 * ms);
+        this.drawScale = ms;
         this.x = CANVAS_W / 2 - this.w / 2;
         this.groundY = CANVAS_H - 60;
         this.y = this.groundY;
@@ -1654,6 +1695,8 @@ class Kiwi {
         this.spinniesEnd = 0;
         this.spinniesAngle = 0;
         this.spinniesFireTimer = 0;
+        // Mega Bark / Kamehameha
+        this.megaBarkCharged = false;
     }
 
     jump() {
@@ -1755,11 +1798,11 @@ class Kiwi {
         // Spinnies: full body spin with pink glow
         if (this.spinniesActive) {
             ctx.save();
-            ctx.translate(this.x + this.w / 2, this.y + this.h / 2 - 4);
+            ctx.translate(this.x + this.w / 2, this.y + this.h / 2 - 4 * this.drawScale);
             ctx.rotate(this.spinniesAngle);
             ctx.shadowColor = COLORS.SPINNIES_PINK;
             ctx.shadowBlur = 20;
-            drawKiwi(0, 0);
+            drawKiwi(0, 0, this.drawScale);
             ctx.shadowBlur = 0;
             ctx.restore();
         } else {
@@ -1768,7 +1811,7 @@ class Kiwi {
                 ctx.shadowColor = '#FFD700';
                 ctx.shadowBlur = 15;
             }
-            drawKiwi(this.x + this.w / 2, this.y + this.h / 2 - 4);
+            drawKiwi(this.x + this.w / 2, this.y + this.h / 2 - 4 * this.drawScale, this.drawScale);
             ctx.shadowBlur = 0;
         }
         ctx.globalAlpha = 1;
@@ -1786,17 +1829,25 @@ class Kiwi {
 
 class Squirrel {
     constructor(x, y) {
+        const ms = window.MOBILE_SCALE || 1;
         this.x = x;
         this.y = y;
-        this.w = 30;
-        this.h = 30;
+        this.w = Math.round(30 * ms);
+        this.h = Math.round(30 * ms);
         this.alive = true;
         this.frame = 0;
+        this.drawScale = ms;
     }
 
     draw() {
         if (!this.alive) return;
-        drawSquirrel(this.x + this.w / 2, this.y + this.h / 2, this.frame);
+        const cx = this.x + this.w / 2;
+        const cy = this.y + this.h / 2;
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.scale(this.drawScale, this.drawScale);
+        drawSquirrel(0, 0, this.frame);
+        ctx.restore();
     }
 
     getRect() {
@@ -1806,16 +1857,18 @@ class Squirrel {
 
 class Bird {
     constructor(x, y) {
+        const ms = window.MOBILE_SCALE || 1;
         this.x = x;
         this.y = y;
-        this.w = 28;
-        this.h = 22;
+        this.w = Math.round(28 * ms);
+        this.h = Math.round(22 * ms);
         this.alive = true;
         this.frame = 0;
         this.baseY = y;
         this.time = Math.random() * Math.PI * 2;
         this.type = 'bird';
         this.dropTimer = 0;
+        this.drawScale = ms;
     }
 
     update(dt) {
@@ -1827,7 +1880,13 @@ class Bird {
 
     draw() {
         if (!this.alive) return;
-        drawBird(this.x + this.w / 2, this.y + this.h / 2, this.frame);
+        const cx = this.x + this.w / 2;
+        const cy = this.y + this.h / 2;
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.scale(this.drawScale, this.drawScale);
+        drawBird(0, 0, this.frame);
+        ctx.restore();
     }
 
     getRect() { return { x: this.x, y: this.y, w: this.w, h: this.h }; }
@@ -1835,10 +1894,11 @@ class Bird {
 
 class Bee {
     constructor(x, y) {
+        const ms = window.MOBILE_SCALE || 1;
         this.x = x;
         this.y = y;
-        this.w = 22;
-        this.h = 22;
+        this.w = Math.round(22 * ms);
+        this.h = Math.round(22 * ms);
         this.alive = true;
         this.frame = 0;
         this.time = Math.random() * Math.PI * 2;
@@ -1846,6 +1906,7 @@ class Bee {
         this.zigTimer = 0;
         this.type = 'bee';
         this.dropTimer = 0;
+        this.drawScale = ms;
     }
 
     update(dt) {
@@ -1862,7 +1923,13 @@ class Bee {
 
     draw() {
         if (!this.alive) return;
-        drawBee(this.x + this.w / 2, this.y + this.h / 2, this.frame);
+        const cx = this.x + this.w / 2;
+        const cy = this.y + this.h / 2;
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.scale(this.drawScale, this.drawScale);
+        drawBee(0, 0, this.frame);
+        ctx.restore();
     }
 
     getRect() { return { x: this.x, y: this.y, w: this.w, h: this.h }; }
@@ -1870,10 +1937,11 @@ class Bee {
 
 class Mailman {
     constructor(x, y) {
+        const ms = window.MOBILE_SCALE || 1;
         this.x = x;
         this.y = y;
-        this.w = 30;
-        this.h = 36;
+        this.w = Math.round(30 * ms);
+        this.h = Math.round(36 * ms);
         this.alive = true;
         this.hp = MAILMAN_HP;
         this.frame = 0;
@@ -1881,6 +1949,7 @@ class Mailman {
         this.walkTimer = 0;
         this.type = 'mailman';
         this.throwTimer = 0;
+        this.drawScale = ms;
     }
 
     update(dt) {
@@ -1904,7 +1973,13 @@ class Mailman {
 
     draw() {
         if (!this.alive) return;
-        drawMailman(this.x + this.w / 2, this.y + this.h / 2, this.frame, this.hp);
+        const cx = this.x + this.w / 2;
+        const cy = this.y + this.h / 2;
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.scale(this.drawScale, this.drawScale);
+        drawMailman(0, 0, this.frame, this.hp);
+        ctx.restore();
     }
 
     getRect() { return { x: this.x, y: this.y, w: this.w, h: this.h }; }
@@ -1912,10 +1987,12 @@ class Mailman {
 
 class Boss {
     constructor(wave) {
-        this.w = 80;
-        this.h = 70;
+        const ms = window.MOBILE_SCALE || 1;
+        this.w = Math.round(80 * ms);
+        this.h = Math.round(70 * ms);
         this.x = CANVAS_W / 2 - this.w / 2;
         this.y = 30;
+        this.drawScale = ms;
         this.speed = BOSS_SPEED;
         this.direction = 1;
         this.maxHp = BOSS_HP_BASE + wave * 2;
@@ -1963,7 +2040,13 @@ class Boss {
 
     draw() {
         if (!this.alive) return;
-        drawRaccoon(this.x + this.w / 2, this.y + this.h / 2 - 5, this.hp, this.maxHp);
+        const cx = this.x + this.w / 2;
+        const cy = this.y + this.h / 2 - 5 * this.drawScale;
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.scale(this.drawScale, this.drawScale);
+        drawRaccoon(0, 0, this.hp, this.maxHp);
+        ctx.restore();
     }
 
     getRect() {
@@ -2026,6 +2109,8 @@ class PowerUp {
             drawKiwiFruit(cx, cy + bob);
         } else if (this.type === 'spinnies') {
             drawSpinnies(cx, cy + bob, t);
+        } else if (this.type === 'megabark') {
+            drawMegaBarkIcon(cx, cy + bob, t);
         }
     }
 
@@ -2175,6 +2260,12 @@ const game = {
     zoomiesTimer: 0, // time since last random zoomies
     zoomiesTriggered: false,
     spinniesSpawnTimer: 0,
+
+    // Kamehameha state
+    kamehamehaActive: false,
+    kamehamehaStart: 0,
+    kamehamehaX: 0,
+    kamehamehaDamageDealt: false,
 
     startGame() {
         this.state = STATES.PLAYING;
@@ -2370,6 +2461,9 @@ const game = {
                 this.kiwi.spinniesAngle = 0;
                 this.kiwi.spinniesFireTimer = 0;
                 break;
+            case 'megabark':
+                this.kiwi.megaBarkCharged = true;
+                break;
         }
         // 15% chance any power-up triggers ZOOMIES
         if (Math.random() < 0.15) {
@@ -2378,7 +2472,25 @@ const game = {
     },
 
     triggerZoomies() {
-        if (this.zoomiesActive) return;
+        if (this.zoomiesActive || this.kamehamehaActive) return;
+
+        // If mega bark is charged, fire Kamehameha instead of zoomies
+        if (this.kiwi.megaBarkCharged) {
+            this.kiwi.megaBarkCharged = false;
+            this.kamehamehaActive = true;
+            this.kamehamehaStart = performance.now();
+            this.kamehamehaX = this.kiwi.x + this.kiwi.w / 2;
+            this.kamehamehaDamageDealt = false;
+            this.kiwi.invincible = true;
+            this.kiwi.invincibleEnd = performance.now() + KAMEHAMEHA_DURATION + 500;
+            // Reset jump state
+            this.kiwi.y = this.kiwi.groundY;
+            this.kiwi.vy = 0;
+            this.kiwi.onGround = true;
+            AudioSystem.playBossDefeat();
+            return;
+        }
+
         this.zoomiesActive = true;
         this.zoomiesEnd = performance.now() + 4000;
         this.zoomiesDirection = Math.random() < 0.5 ? -1 : 1;
@@ -2397,13 +2509,14 @@ const game = {
 
     maybeDropPowerUp(x, y) {
         if (Math.random() < POWERUP_CHANCE) {
-            // Weighted: bone 40%, treat 25%, spinnies 20%, kiwi 15%
+            // Weighted: bone 35%, treat 22%, spinnies 18%, kiwi 15%, megabark 10%
             const r = Math.random();
             let type;
-            if (r < 0.40) type = 'bone';
-            else if (r < 0.65) type = 'treat';
-            else if (r < 0.85) type = 'spinnies';
-            else type = 'kiwi';
+            if (r < 0.35) type = 'bone';
+            else if (r < 0.57) type = 'treat';
+            else if (r < 0.75) type = 'spinnies';
+            else if (r < 0.90) type = 'kiwi';
+            else type = 'megabark';
             this.powerUps.push(new PowerUp(x - 10, y - 10, type));
         }
     }
@@ -2412,6 +2525,74 @@ const game = {
 // ============================================================
 //  UPDATE FUNCTIONS
 // ============================================================
+
+function updateKamehameha(dt, now, g) {
+    if (!g.kamehamehaActive) return;
+
+    const elapsed = now - g.kamehamehaStart;
+
+    // Lock Kiwi in place during kamehameha
+    g.kiwi.x = g.kamehamehaX - g.kiwi.w / 2;
+    g.kiwi.y = g.kiwi.groundY;
+    g.kiwi.onGround = true;
+
+    // After charge-up, deal damage (once)
+    if (elapsed >= KAMEHAMEHA_CHARGE_TIME && !g.kamehamehaDamageDealt) {
+        g.kamehamehaDamageDealt = true;
+        // Screen flash
+        spawnScreenFlash();
+        // Kill ALL enemies on screen
+        const killEnemy = (e, score, colors) => {
+            if (!e.alive) return;
+            e.alive = false;
+            g.score += score;
+            spawnExplosion(e.x + e.w / 2, e.y + e.h / 2, colors, 8);
+        };
+        g.squirrels.forEach(s => killEnemy(s, SCORE_SQUIRREL,
+            [COLORS.SQUIRREL_BODY, COLORS.SQUIRREL_LIGHT, '#ffaa44']));
+        g.birds.forEach(b => killEnemy(b, SCORE_BIRD,
+            [COLORS.BIRD_BODY, COLORS.BIRD_WING, '#ffffff']));
+        g.bees.forEach(b => killEnemy(b, SCORE_BEE,
+            [COLORS.BEE_BODY, COLORS.BEE_STRIPE, '#FFD700']));
+        g.mailmen.forEach(m => killEnemy(m, SCORE_MAILMAN,
+            [COLORS.MAILMAN_SHIRT, COLORS.MAILMAN_HAT, '#ffffff']));
+        // Damage boss if in boss fight
+        if (g.boss && g.boss.alive) {
+            const dmg = Math.ceil(g.boss.hp * 0.75); // 75% of remaining HP
+            for (let i = 0; i < dmg; i++) {
+                g.score += SCORE_BOSS_HIT;
+                g.boss.takeDamage();
+                if (!g.boss.alive) {
+                    g.score += SCORE_BOSS_KILL;
+                    g.powerUps.push(new PowerUp(
+                        g.boss.x + g.boss.w / 2 - 10,
+                        g.boss.y + g.boss.h / 2 - 10, 'treat'));
+                    break;
+                }
+            }
+            spawnExplosion(g.boss.x + g.boss.w / 2, g.boss.y + g.boss.h / 2,
+                [COLORS.KAME_CORE, COLORS.KAME_GLOW, '#ffffff'], 30);
+        }
+        // Clear all acorns too
+        g.acorns = [];
+        // Massive screen shake
+        g.zoomiesShake = {x: (Math.random() - 0.5) * 20, y: (Math.random() - 0.5) * 15};
+    }
+
+    // Screen shake during beam
+    if (elapsed >= KAMEHAMEHA_CHARGE_TIME) {
+        g.zoomiesShake = {
+            x: (Math.random() - 0.5) * 12,
+            y: (Math.random() - 0.5) * 8
+        };
+    }
+
+    // End kamehameha
+    if (elapsed >= KAMEHAMEHA_DURATION) {
+        g.kamehamehaActive = false;
+        g.zoomiesShake = {x: 0, y: 0};
+    }
+}
 
 function updateZoomies(dt, now, g) {
     if (!g.zoomiesActive) {
@@ -2488,8 +2669,9 @@ function updatePlaying(dt, now) {
     // Update Kiwi
     g.kiwi.update(dt, now);
 
-    // ZOOMIES update (overrides kiwi movement when active)
+    // ZOOMIES / Kamehameha update (overrides kiwi movement when active)
     updateZoomies(dt, now, g);
+    updateKamehameha(dt, now, g);
 
     // Guaranteed spinnies spawn timer
     g.spinniesSpawnTimer += dt;
@@ -2847,6 +3029,13 @@ function drawHUD() {
         const remaining = Math.max(0, (g.kiwi.spinniesEnd - performance.now()) / 1000);
         drawRetroText(`SPINNIES! ${remaining.toFixed(1)}s`, CANVAS_W / 2, 55, 12, COLORS.SPINNIES_PINK, 'center');
     }
+
+    // Mega Bark charged indicator
+    if (g.kiwi && g.kiwi.megaBarkCharged) {
+        const flash = Math.floor(performance.now() / 300) % 2 === 0;
+        const color = flash ? COLORS.KAME_CORE : COLORS.KAME_GLOW;
+        drawRetroText('MEGA BARK READY! PRESS Z', CANVAS_W / 2, 70, 12, color, 'center');
+    }
 }
 
 function drawTitleScreen(now) {
@@ -2974,8 +3163,8 @@ function gameLoop(timestamp) {
     updateParticles(dt);
 
     // --- DRAW ---
-    // Screen shake from zoomies
-    if (game.zoomiesActive) {
+    // Screen shake from zoomies or kamehameha
+    if (game.zoomiesActive || game.kamehamehaActive) {
         ctx.save();
         ctx.translate(game.zoomiesShake.x, game.zoomiesShake.y);
     }
@@ -3052,6 +3241,142 @@ function gameLoop(timestamp) {
     // Screen flash (always on top)
     drawScreenFlash(dt);
 
+    // KAMEHAMEHA visual effects
+    if (game.kamehamehaActive) {
+        const elapsed = performance.now() - game.kamehamehaStart;
+        const kx = game.kamehamehaX;
+        const ky = game.kiwi ? game.kiwi.groundY + game.kiwi.h / 2 - 4 : CANVAS_H - 40;
+
+        if (elapsed < KAMEHAMEHA_CHARGE_TIME) {
+            // Charge-up phase: growing energy ball at Kiwi's position
+            const chargeProgress = elapsed / KAMEHAMEHA_CHARGE_TIME;
+            const radius = 8 + chargeProgress * 25;
+            const pulse = Math.sin(elapsed * 0.03) * 5;
+
+            // Energy gathering lines
+            for (let i = 0; i < 12; i++) {
+                const angle = (Math.PI * 2 / 12) * i + elapsed * 0.005;
+                const dist = 80 * (1 - chargeProgress) + pulse;
+                ctx.strokeStyle = COLORS.KAME_OUTER;
+                ctx.globalAlpha = chargeProgress * 0.8;
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(kx + Math.cos(angle) * dist, ky - 20 + Math.sin(angle) * dist);
+                ctx.lineTo(kx + Math.cos(angle) * (radius + 5), ky - 20 + Math.sin(angle) * (radius + 5));
+                ctx.stroke();
+            }
+
+            // Charge ball
+            ctx.globalAlpha = 0.4 + chargeProgress * 0.4;
+            ctx.fillStyle = COLORS.KAME_GLOW;
+            ctx.beginPath();
+            ctx.arc(kx, ky - 20, radius + pulse, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = COLORS.KAME_CORE;
+            ctx.beginPath();
+            ctx.arc(kx, ky - 20, radius * 0.6, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = '#ffffff';
+            ctx.beginPath();
+            ctx.arc(kx, ky - 20, radius * 0.25, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.globalAlpha = 1;
+
+            // "MEGA BARK!!!" charging text
+            const textPulse = 1 + Math.sin(elapsed * 0.02) * 0.15;
+            ctx.save();
+            ctx.translate(CANVAS_W / 2, CANVAS_H * 0.4);
+            ctx.scale(textPulse, textPulse);
+            ctx.fillStyle = COLORS.KAME_CORE;
+            ctx.strokeStyle = '#000';
+            ctx.lineWidth = 4;
+            ctx.font = 'bold 32px monospace';
+            ctx.textAlign = 'center';
+            ctx.strokeText('MEGA BARK!!!', 0, 0);
+            ctx.fillText('MEGA BARK!!!', 0, 0);
+            ctx.restore();
+        } else {
+            // BEAM PHASE — giant beam from Kiwi upward
+            const beamElapsed = elapsed - KAMEHAMEHA_CHARGE_TIME;
+            const beamDuration = KAMEHAMEHA_DURATION - KAMEHAMEHA_CHARGE_TIME;
+            const beamProgress = Math.min(beamElapsed / 200, 1); // beam extends in 200ms
+            const beamFade = beamElapsed > beamDuration - 500 ? (beamDuration - beamElapsed) / 500 : 1;
+            const beamHeight = ky * beamProgress;
+            const baseWidth = 30 + Math.sin(beamElapsed * 0.01) * 8;
+            const wobble = Math.sin(beamElapsed * 0.015) * 4;
+
+            // Outer glow
+            ctx.globalAlpha = 0.25 * beamFade;
+            ctx.fillStyle = COLORS.KAME_GLOW;
+            ctx.fillRect(kx - baseWidth * 1.5 + wobble, ky - 20 - beamHeight, baseWidth * 3, beamHeight + 20);
+
+            // Main beam
+            ctx.globalAlpha = 0.7 * beamFade;
+            const gradient = ctx.createLinearGradient(kx - baseWidth, 0, kx + baseWidth, 0);
+            gradient.addColorStop(0, 'rgba(0, 136, 255, 0)');
+            gradient.addColorStop(0.2, COLORS.KAME_CORE);
+            gradient.addColorStop(0.5, '#ffffff');
+            gradient.addColorStop(0.8, COLORS.KAME_CORE);
+            gradient.addColorStop(1, 'rgba(0, 136, 255, 0)');
+            ctx.fillStyle = gradient;
+            ctx.fillRect(kx - baseWidth + wobble, ky - 20 - beamHeight, baseWidth * 2, beamHeight + 20);
+
+            // Core beam (bright white center)
+            ctx.globalAlpha = 0.9 * beamFade;
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(kx - baseWidth * 0.3 + wobble, ky - 20 - beamHeight, baseWidth * 0.6, beamHeight + 20);
+
+            // Energy particles along beam
+            ctx.globalAlpha = beamFade;
+            for (let i = 0; i < 8; i++) {
+                const py = ky - 20 - Math.random() * beamHeight;
+                const px = kx + (Math.random() - 0.5) * baseWidth * 2 + wobble;
+                ctx.fillStyle = Math.random() > 0.5 ? COLORS.KAME_CORE : '#ffffff';
+                ctx.beginPath();
+                ctx.arc(px, py, 1 + Math.random() * 3, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            ctx.globalAlpha = 1;
+
+            // Beam origin glow at Kiwi
+            ctx.fillStyle = COLORS.KAME_CORE;
+            ctx.globalAlpha = 0.6 * beamFade;
+            ctx.beginPath();
+            ctx.arc(kx, ky - 15, 20 + Math.sin(beamElapsed * 0.02) * 5, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.globalAlpha = 1;
+
+            // "MEGA BARK!!!" text
+            const scale = 2 + Math.sin(beamElapsed * 0.008) * 0.3;
+            ctx.save();
+            ctx.translate(CANVAS_W / 2, CANVAS_H * 0.35);
+            ctx.scale(scale, scale);
+            const hue = (beamElapsed * 0.5) % 360;
+            ctx.fillStyle = `hsl(${hue}, 80%, 70%)`;
+            ctx.strokeStyle = '#000';
+            ctx.lineWidth = 3;
+            ctx.font = 'bold 28px monospace';
+            ctx.textAlign = 'center';
+            ctx.strokeText('MEGA BARK!!!', 0, 0);
+            ctx.fillText('MEGA BARK!!!', 0, 0);
+            ctx.restore();
+
+            // Blue border flash
+            ctx.strokeStyle = `hsl(${200 + Math.sin(beamElapsed * 0.01) * 20}, 100%, 60%)`;
+            ctx.lineWidth = 4;
+            ctx.globalAlpha = 0.7 * beamFade;
+            ctx.strokeRect(2, 2, CANVAS_W - 4, CANVAS_H - 4);
+            ctx.globalAlpha = 1;
+        }
+
+        // Screen shake transform (kamehameha sets zoomiesShake)
+        if (!game.zoomiesActive) {
+            ctx.save();
+            ctx.translate(game.zoomiesShake.x, game.zoomiesShake.y);
+            ctx.restore();
+        }
+    }
+
     // ZOOMIES visual effects
     if (game.zoomiesActive) {
         // Draw rainbow afterimages
@@ -3090,6 +3415,9 @@ function gameLoop(timestamp) {
         ctx.strokeRect(2, 2, CANVAS_W - 4, CANVAS_H - 4);
 
         // End screen shake transform
+        ctx.restore();
+    } else if (game.kamehamehaActive) {
+        // End screen shake transform for kamehameha
         ctx.restore();
     }
 
