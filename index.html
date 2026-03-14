@@ -148,6 +148,7 @@
             width: 100vw;
             height: calc(100vh - 160px);
             height: calc(100dvh - 160px);
+            object-fit: contain;
             border: none;
             box-shadow: none;
         }
@@ -750,19 +751,11 @@ const muteBtn = document.getElementById('muteBtn');
 // so the game fills the screen without distortion
 (function adjustForMobile() {
     const touch = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
-    const portrait = window.innerHeight > window.innerWidth;
-    if (touch && portrait) {
-        const touchControlsHeight = 160;
-        const screenW = window.innerWidth;
-        const screenH = window.innerHeight - touchControlsHeight;
-        // Scale height to match aspect ratio but cap at 4:3 to avoid too-tall canvas
-        const rawH = Math.round(800 * (screenH / screenW));
-        CANVAS_H = Math.min(rawH, 900);
-        canvas.width = CANVAS_W;
-        canvas.height = CANVAS_H;
-    }
+    // Keep the default 800x600 internal resolution on all devices.
+    // CSS stretches the canvas to fill the screen — this avoids
+    // the tall-canvas dead-space problem on portrait phones.
     // Mobile scale factor — makes Kiwi and key elements bigger on touch devices
-    window.MOBILE_SCALE = touch ? 2.0 : 1;
+    window.MOBILE_SCALE = touch ? 1.8 : 1;
 })();
 
 let audioInitialized = false;
@@ -826,20 +819,9 @@ document.addEventListener('keyup', (e) => {
 
 const isTouchDevice = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
 
-// Dynamically size canvas to fill available screen on mobile
-function resizeCanvasForMobile() {
-    if (!isTouchDevice) return;
-    const touchBar = document.getElementById('touchControls');
-    const touchHeight = touchBar ? touchBar.offsetHeight : 120;
-    canvas.style.width = window.innerWidth + 'px';
-    canvas.style.height = (window.innerHeight - touchHeight) + 'px';
-}
-
-if (isTouchDevice) {
-    resizeCanvasForMobile();
-    window.addEventListener('resize', resizeCanvasForMobile);
-    setTimeout(resizeCanvasForMobile, 100);
-}
+// Canvas sizing on mobile is handled by CSS media query —
+// no JS override needed. The 800x600 internal resolution
+// is stretched via CSS to fit the screen above the touch controls.
 
 function initTouch() {
     function bindHold(btnId, keyCode) {
@@ -1122,7 +1104,8 @@ function drawKiwi(x, y, scale = 1, frame = 0) {
 }
 
 function drawKiwiMini(x, y) {
-    drawKiwi(x, y, 0.5);
+    const ms = window.MOBILE_SCALE || 1;
+    drawKiwi(x, y, 0.5 * ms);
 }
 
 // --- Squirrel sprite ---
@@ -1680,8 +1663,7 @@ class Kiwi {
         this.h = Math.round(40 * ms);
         this.drawScale = ms;
         this.x = CANVAS_W / 2 - this.w / 2;
-        // On mobile, push Kiwi up a bit so she's not behind controls
-        this.groundY = CANVAS_H - (ms > 1 ? 90 : 60);
+        this.groundY = CANVAS_H - 60;
         this.y = this.groundY;
         this.speed = KIWI_SPEED;
         this.lastBark = 0;
@@ -2359,7 +2341,7 @@ const game = {
             for (let i = 0; i < numMailmen; i++) {
                 this.mailmen.push(new Mailman(
                     randInt(50, CANVAS_W - 80),
-                    CANVAS_H - ((window.MOBILE_SCALE || 1) > 1 ? 210 : 130)
+                    CANVAS_H - 130
                 ));
             }
         }
@@ -3017,7 +2999,8 @@ function drawHUD() {
 
     // Lives (as mini Kiwis)
     for (let i = 0; i < g.lives; i++) {
-        drawKiwiMini(20 + i * 28, CANVAS_H - 16);
+        const ms = window.MOBILE_SCALE || 1;
+        drawKiwiMini(20 + i * Math.round(28 * ms), CANVAS_H - 16);
     }
 
     // Rapid fire indicator
