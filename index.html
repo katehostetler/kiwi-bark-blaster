@@ -1679,7 +1679,8 @@ class Kiwi {
         this.h = Math.round(40 * ms);
         this.drawScale = ms;
         this.x = CANVAS_W / 2 - this.w / 2;
-        this.groundY = CANVAS_H - 60;
+        // On mobile, push Kiwi higher so she's not behind controls
+        this.groundY = CANVAS_H - (ms > 1 ? 140 : 60);
         this.y = this.groundY;
         this.speed = KIWI_SPEED;
         this.lastBark = 0;
@@ -2357,7 +2358,7 @@ const game = {
             for (let i = 0; i < numMailmen; i++) {
                 this.mailmen.push(new Mailman(
                     randInt(50, CANVAS_W - 80),
-                    CANVAS_H - 130
+                    CANVAS_H - ((window.MOBILE_SCALE || 1) > 1 ? 210 : 130)
                 ));
             }
         }
