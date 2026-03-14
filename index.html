@@ -1679,8 +1679,8 @@ class Kiwi {
         this.h = Math.round(40 * ms);
         this.drawScale = ms;
         this.x = CANVAS_W / 2 - this.w / 2;
-        // On mobile, push Kiwi higher so she's not behind controls
-        this.groundY = CANVAS_H - (ms > 1 ? 140 : 60);
+        // On mobile, push Kiwi up a bit so she's not behind controls
+        this.groundY = CANVAS_H - (ms > 1 ? 90 : 60);
         this.y = this.groundY;
         this.speed = KIWI_SPEED;
         this.lastBark = 0;
