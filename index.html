@@ -3297,53 +3297,73 @@ function gameLoop(timestamp) {
             ctx.fillText('MEGA BARK!!!', 0, 0);
             ctx.restore();
         } else {
-            // BEAM PHASE — giant beam from Kiwi upward
+            // BEAM PHASE — FULL SCREEN Kamehameha from Kiwi upward
             const beamElapsed = elapsed - KAMEHAMEHA_CHARGE_TIME;
             const beamDuration = KAMEHAMEHA_DURATION - KAMEHAMEHA_CHARGE_TIME;
-            const beamProgress = Math.min(beamElapsed / 200, 1); // beam extends in 200ms
+            const beamProgress = Math.min(beamElapsed / 150, 1); // beam extends fast
             const beamFade = beamElapsed > beamDuration - 500 ? (beamDuration - beamElapsed) / 500 : 1;
             const beamHeight = ky * beamProgress;
-            const baseWidth = 30 + Math.sin(beamElapsed * 0.01) * 8;
-            const wobble = Math.sin(beamElapsed * 0.015) * 4;
+            const halfW = CANVAS_W / 2;
+            const wobble = Math.sin(beamElapsed * 0.012) * 8;
 
-            // Outer glow
-            ctx.globalAlpha = 0.25 * beamFade;
+            // Full-screen outer glow — covers entire canvas width
+            ctx.globalAlpha = 0.2 * beamFade;
             ctx.fillStyle = COLORS.KAME_GLOW;
-            ctx.fillRect(kx - baseWidth * 1.5 + wobble, ky - 20 - beamHeight, baseWidth * 3, beamHeight + 20);
+            ctx.fillRect(0, ky - 20 - beamHeight, CANVAS_W, beamHeight + 20);
 
-            // Main beam
-            ctx.globalAlpha = 0.7 * beamFade;
-            const gradient = ctx.createLinearGradient(kx - baseWidth, 0, kx + baseWidth, 0);
-            gradient.addColorStop(0, 'rgba(0, 136, 255, 0)');
-            gradient.addColorStop(0.2, COLORS.KAME_CORE);
+            // Main beam — wide gradient across full screen
+            ctx.globalAlpha = 0.6 * beamFade;
+            const gradient = ctx.createLinearGradient(0, 0, CANVAS_W, 0);
+            gradient.addColorStop(0, 'rgba(0, 50, 180, 0)');
+            gradient.addColorStop(0.1, 'rgba(0, 136, 255, 0.3)');
+            gradient.addColorStop(0.25, COLORS.KAME_CORE);
             gradient.addColorStop(0.5, '#ffffff');
-            gradient.addColorStop(0.8, COLORS.KAME_CORE);
-            gradient.addColorStop(1, 'rgba(0, 136, 255, 0)');
+            gradient.addColorStop(0.75, COLORS.KAME_CORE);
+            gradient.addColorStop(0.9, 'rgba(0, 136, 255, 0.3)');
+            gradient.addColorStop(1, 'rgba(0, 50, 180, 0)');
             ctx.fillStyle = gradient;
-            ctx.fillRect(kx - baseWidth + wobble, ky - 20 - beamHeight, baseWidth * 2, beamHeight + 20);
+            ctx.fillRect(0, ky - 20 - beamHeight, CANVAS_W, beamHeight + 20);
 
-            // Core beam (bright white center)
-            ctx.globalAlpha = 0.9 * beamFade;
+            // Intense core — center third of screen
+            ctx.globalAlpha = 0.85 * beamFade;
+            const coreGrad = ctx.createLinearGradient(CANVAS_W * 0.25, 0, CANVAS_W * 0.75, 0);
+            coreGrad.addColorStop(0, 'rgba(102, 221, 255, 0)');
+            coreGrad.addColorStop(0.3, COLORS.KAME_CORE);
+            coreGrad.addColorStop(0.5, '#ffffff');
+            coreGrad.addColorStop(0.7, COLORS.KAME_CORE);
+            coreGrad.addColorStop(1, 'rgba(102, 221, 255, 0)');
+            ctx.fillStyle = coreGrad;
+            ctx.fillRect(CANVAS_W * 0.25, ky - 20 - beamHeight, CANVAS_W * 0.5, beamHeight + 20);
+
+            // Bright white center strip
+            ctx.globalAlpha = 0.95 * beamFade;
             ctx.fillStyle = '#ffffff';
-            ctx.fillRect(kx - baseWidth * 0.3 + wobble, ky - 20 - beamHeight, baseWidth * 0.6, beamHeight + 20);
+            const stripW = CANVAS_W * 0.15 + Math.sin(beamElapsed * 0.01) * CANVAS_W * 0.03;
+            ctx.fillRect(kx - stripW / 2 + wobble, ky - 20 - beamHeight, stripW, beamHeight + 20);
 
-            // Energy particles along beam
+            // Energy particles scattered across full beam width
             ctx.globalAlpha = beamFade;
-            for (let i = 0; i < 8; i++) {
+            for (let i = 0; i < 20; i++) {
                 const py = ky - 20 - Math.random() * beamHeight;
-                const px = kx + (Math.random() - 0.5) * baseWidth * 2 + wobble;
-                ctx.fillStyle = Math.random() > 0.5 ? COLORS.KAME_CORE : '#ffffff';
+                const px = Math.random() * CANVAS_W;
+                const size = 2 + Math.random() * 5;
+                ctx.fillStyle = Math.random() > 0.4 ? COLORS.KAME_CORE : '#ffffff';
                 ctx.beginPath();
-                ctx.arc(px, py, 1 + Math.random() * 3, 0, Math.PI * 2);
+                ctx.arc(px, py, size, 0, Math.PI * 2);
                 ctx.fill();
             }
             ctx.globalAlpha = 1;
 
-            // Beam origin glow at Kiwi
+            // Beam origin glow at Kiwi — big
             ctx.fillStyle = COLORS.KAME_CORE;
-            ctx.globalAlpha = 0.6 * beamFade;
+            ctx.globalAlpha = 0.7 * beamFade;
             ctx.beginPath();
-            ctx.arc(kx, ky - 15, 20 + Math.sin(beamElapsed * 0.02) * 5, 0, Math.PI * 2);
+            ctx.arc(kx, ky - 15, 50 + Math.sin(beamElapsed * 0.02) * 10, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = '#ffffff';
+            ctx.globalAlpha = 0.5 * beamFade;
+            ctx.beginPath();
+            ctx.arc(kx, ky - 15, 25, 0, Math.PI * 2);
             ctx.fill();
             ctx.globalAlpha = 1;
 
