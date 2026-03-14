@@ -248,6 +248,8 @@ const AudioSystem = (function () {
         Eb3: 51, Bb3: 58, Eb4: 63, Bb4: 70, Ab4: 68, Eb5: 75, Bb5: 82,
     };
 
+    let resumePromise = null;
+
     function init() {
         if (!ctx) {
             ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -258,7 +260,7 @@ const AudioSystem = (function () {
         // Always try to resume — iOS suspends the context and requires
         // resume() to be called from a direct user gesture each time
         if (ctx.state === 'suspended') {
-            ctx.resume();
+            resumePromise = ctx.resume().then(() => { resumePromise = null; });
         }
     }
 
@@ -569,16 +571,12 @@ const AudioSystem = (function () {
 
     function startMusic() {
         if (!ctx || musicPlaying) return;
-        // Ensure audio context is running (critical for iOS)
-        if (ctx.state === 'suspended') {
-            ctx.resume().then(() => {
-                if (!musicPlaying) startMusicInternal();
+        // If audio context is suspended or a resume is in progress, wait for it
+        if (ctx.state !== 'running' || resumePromise) {
+            const pending = resumePromise || (ctx.state === 'suspended' ? ctx.resume() : Promise.resolve());
+            pending.then(() => {
+                if (!musicPlaying && ctx.state === 'running') startMusicInternal();
             });
-            // Also try immediately in case resume is synchronous
-            if (ctx.state === 'running') {
-                startMusicInternal();
-                return;
-            }
             return;
         }
         startMusicInternal();
