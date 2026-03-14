@@ -159,9 +159,12 @@
 
 <div id="touchControls">
     <div class="touch-row">
-        <div class="touch-group">
-            <button class="touch-btn" id="btnLeft">&#x25C0;</button>
-            <button class="touch-btn" id="btnRight">&#x25B6;</button>
+        <div class="touch-group" style="flex-wrap: wrap; justify-content: center; width: 168px;">
+            <button class="touch-btn" id="btnUp" style="width: 60px; height: 60px; margin-bottom: -4px;">&#x25B2;</button>
+            <div style="display: flex; gap: 12px;">
+                <button class="touch-btn" id="btnLeft">&#x25C0;</button>
+                <button class="touch-btn" id="btnRight">&#x25B6;</button>
+            </div>
         </div>
         <div class="touch-group">
             <button class="touch-btn zoomies-btn" id="btnZoomies">Z</button>
@@ -664,7 +667,21 @@ const COLORS = {
     RACCOON_LIGHT: '#8a8a8a',
     RACCOON_DARK: '#4a4a4a',
     RACCOON_MASK: '#222222',
-    RACCOON_NOSE: '#333333'
+    RACCOON_NOSE: '#333333',
+    SPINNIES_PINK: '#FF69B4',
+    SPINNIES_LIGHT: '#FFB6C1',
+    BIRD_BODY: '#4488CC',
+    BIRD_WING: '#66AAEE',
+    BIRD_BEAK: '#FFAA00',
+    BEE_BODY: '#FFD700',
+    BEE_STRIPE: '#222222',
+    BEE_WING: '#FFFFFF',
+    MAILMAN_SHIRT: '#3355AA',
+    MAILMAN_PANTS: '#333355',
+    MAILMAN_SKIN: '#DDB888',
+    MAILMAN_HAT: '#2244AA',
+    PACKAGE_BROWN: '#8B6914',
+    PACKAGE_LIGHT: '#C49A3C'
 };
 
 // Gameplay tuning
@@ -692,6 +709,27 @@ const INVINCIBILITY_DURATION = 2000;
 const SCORE_SQUIRREL = 10;
 const SCORE_BOSS_HIT = 50;
 const SCORE_BOSS_KILL = 200;
+
+// Jump
+const JUMP_VELOCITY = -450;
+const GRAVITY = 1200;
+
+// Spinnies power-up
+const SPINNIES_DURATION = 5000;
+const SPINNIES_SPAWN_INTERVAL = 30; // seconds between guaranteed spawns
+const SPINNIES_FIRE_RATE = 150; // ms between auto-fire bursts
+
+// New enemy scores & tuning
+const SCORE_BIRD = 15;
+const SCORE_BEE = 20;
+const SCORE_MAILMAN = 25;
+const BIRD_SPEED = 100;
+const BEE_SPEED = 150;
+const MAILMAN_SPEED = 40;
+const MAILMAN_HP = 2;
+const BIRD_DROP_INTERVAL = 3000; // ms
+const BEE_DROP_INTERVAL = 2500; // ms
+const MAILMAN_THROW_INTERVAL = 2000; // ms
 
 // ============================================================
 //  CANVAS & STATE
@@ -752,6 +790,13 @@ document.addEventListener('keydown', (e) => {
             game.startGame();
         } else if (game.state === STATES.GAME_OVER) {
             game.resetToTitle();
+        }
+    }
+
+    // Up arrow triggers jump (one-shot, not hold)
+    if (e.code === 'ArrowUp' && (game.state === STATES.PLAYING || game.state === STATES.BOSS)) {
+        if (game.kiwi && game.kiwi.onGround) {
+            game.kiwi.jump();
         }
     }
 
@@ -838,6 +883,28 @@ function initTouch() {
         btnZ.addEventListener('touchend', (e) => {
             e.preventDefault();
             btnZ.classList.remove('active');
+        }, { passive: false });
+    }
+
+    // Jump: tap to trigger (one-shot, not hold)
+    const btnUp = document.getElementById('btnUp');
+    if (btnUp) {
+        btnUp.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            if (!audioInitialized) {
+                AudioSystem.init();
+                audioInitialized = true;
+            }
+            btnUp.classList.add('active');
+            if (game.kiwi && game.kiwi.onGround &&
+                (game.state === STATES.PLAYING || game.state === STATES.BOSS)) {
+                game.kiwi.jump();
+            }
+        }, { passive: false });
+
+        btnUp.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            btnUp.classList.remove('active');
         }, { passive: false });
     }
 
@@ -1319,6 +1386,183 @@ function drawKiwiFruit(x, y) {
     });
 }
 
+function drawSpinnies(x, y, t) {
+    // Spinning paw-print swirl icon
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(t * 6);
+    // Central pad
+    ctx.fillStyle = COLORS.SPINNIES_PINK;
+    ctx.beginPath();
+    ctx.arc(0, 0, 5, 0, Math.PI * 2);
+    ctx.fill();
+    // Four toe pads in a circle
+    for (let i = 0; i < 4; i++) {
+        const a = (Math.PI * 2 / 4) * i;
+        ctx.fillStyle = COLORS.SPINNIES_LIGHT;
+        ctx.beginPath();
+        ctx.arc(Math.cos(a) * 7, Math.sin(a) * 7, 3, 0, Math.PI * 2);
+        ctx.fill();
+    }
+    ctx.restore();
+}
+
+function drawBird(x, y, frame) {
+    // Body
+    ctx.fillStyle = COLORS.BIRD_BODY;
+    ctx.beginPath();
+    ctx.ellipse(x, y, 12, 8, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // Wing (flap animation)
+    ctx.fillStyle = COLORS.BIRD_WING;
+    const wingY = frame === 0 ? -8 : -3;
+    ctx.beginPath();
+    ctx.moveTo(x - 4, y);
+    ctx.lineTo(x - 14, y + wingY);
+    ctx.lineTo(x + 4, y);
+    ctx.closePath();
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(x + 4, y);
+    ctx.lineTo(x + 14, y + wingY);
+    ctx.lineTo(x - 4, y);
+    ctx.closePath();
+    ctx.fill();
+    // Beak
+    ctx.fillStyle = COLORS.BIRD_BEAK;
+    ctx.beginPath();
+    ctx.moveTo(x + 12, y - 1);
+    ctx.lineTo(x + 17, y + 1);
+    ctx.lineTo(x + 12, y + 3);
+    ctx.closePath();
+    ctx.fill();
+    // Eye
+    ctx.fillStyle = '#111';
+    ctx.beginPath();
+    ctx.arc(x + 6, y - 2, 2, 0, Math.PI * 2);
+    ctx.fill();
+}
+
+function drawBee(x, y, frame) {
+    // Body
+    ctx.fillStyle = COLORS.BEE_BODY;
+    ctx.beginPath();
+    ctx.ellipse(x, y, 9, 7, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // Black stripes
+    ctx.fillStyle = COLORS.BEE_STRIPE;
+    for (let i = -1; i <= 1; i++) {
+        ctx.fillRect(x - 8 + i * 6, y - 3, 3, 6);
+    }
+    // Wings (buzz animation)
+    ctx.globalAlpha = 0.6;
+    ctx.fillStyle = COLORS.BEE_WING;
+    const wingSpread = frame === 0 ? -9 : -6;
+    ctx.beginPath();
+    ctx.ellipse(x - 4, y + wingSpread, 5, 3, -0.3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(x + 4, y + wingSpread, 5, 3, 0.3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    // Stinger
+    ctx.fillStyle = '#111';
+    ctx.beginPath();
+    ctx.moveTo(x - 9, y);
+    ctx.lineTo(x - 13, y + 1);
+    ctx.lineTo(x - 9, y + 2);
+    ctx.closePath();
+    ctx.fill();
+    // Eyes
+    ctx.fillStyle = '#111';
+    ctx.beginPath();
+    ctx.arc(x + 5, y - 2, 1.5, 0, Math.PI * 2);
+    ctx.fill();
+}
+
+function drawMailman(x, y, frame, hp) {
+    // Flash red when damaged
+    if (hp < MAILMAN_HP && Math.floor(performance.now() / 150) % 2 === 0) {
+        ctx.globalAlpha = 0.6;
+    }
+    // Body/shirt
+    ctx.fillStyle = COLORS.MAILMAN_SHIRT;
+    ctx.fillRect(x - 8, y - 6, 16, 14);
+    // Pants
+    ctx.fillStyle = COLORS.MAILMAN_PANTS;
+    ctx.fillRect(x - 8, y + 8, 7, 8);
+    ctx.fillRect(x + 1, y + 8, 7, 8);
+    // Head
+    ctx.fillStyle = COLORS.MAILMAN_SKIN;
+    ctx.beginPath();
+    ctx.arc(x, y - 12, 7, 0, Math.PI * 2);
+    ctx.fill();
+    // Hat
+    ctx.fillStyle = COLORS.MAILMAN_HAT;
+    ctx.fillRect(x - 9, y - 19, 18, 5);
+    ctx.fillRect(x - 6, y - 22, 12, 4);
+    // Eyes
+    ctx.fillStyle = '#111';
+    ctx.beginPath();
+    ctx.arc(x - 3, y - 13, 1.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(x + 3, y - 13, 1.5, 0, Math.PI * 2);
+    ctx.fill();
+    // Mail bag
+    ctx.fillStyle = COLORS.PACKAGE_BROWN;
+    ctx.fillRect(x + 8, y - 4, 6, 8);
+    // Walking animation - shift feet
+    if (frame % 2 === 0) {
+        ctx.fillStyle = '#222';
+        ctx.fillRect(x - 7, y + 16, 5, 3);
+        ctx.fillRect(x + 3, y + 14, 5, 3);
+    } else {
+        ctx.fillStyle = '#222';
+        ctx.fillRect(x - 7, y + 14, 5, 3);
+        ctx.fillRect(x + 3, y + 16, 5, 3);
+    }
+    ctx.globalAlpha = 1;
+}
+
+function drawPackage(x, y) {
+    ctx.fillStyle = COLORS.PACKAGE_BROWN;
+    ctx.fillRect(x - 5, y - 4, 10, 8);
+    ctx.fillStyle = COLORS.PACKAGE_LIGHT;
+    ctx.fillRect(x - 1, y - 4, 2, 8);
+    ctx.fillRect(x - 5, y - 1, 10, 2);
+}
+
+function drawFeather(x, y) {
+    ctx.fillStyle = COLORS.BIRD_WING;
+    ctx.beginPath();
+    ctx.ellipse(x, y, 3, 6, 0.3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = COLORS.BIRD_BODY;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(x, y - 6);
+    ctx.lineTo(x, y + 6);
+    ctx.stroke();
+}
+
+function drawStinger(x, y) {
+    ctx.fillStyle = COLORS.BEE_BODY;
+    ctx.beginPath();
+    ctx.moveTo(x, y - 5);
+    ctx.lineTo(x - 3, y + 3);
+    ctx.lineTo(x + 3, y + 3);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = '#111';
+    ctx.beginPath();
+    ctx.moveTo(x, y + 3);
+    ctx.lineTo(x - 1, y + 7);
+    ctx.lineTo(x + 1, y + 7);
+    ctx.closePath();
+    ctx.fill();
+}
+
 function fillCircle(x, y, r) {
     ctx.beginPath();
     ctx.arc(x, y, r, 0, Math.PI * 2);
@@ -1394,13 +1638,28 @@ class Kiwi {
         this.w = 40;
         this.h = 40;
         this.x = CANVAS_W / 2 - this.w / 2;
-        this.y = CANVAS_H - 60;
+        this.groundY = CANVAS_H - 60;
+        this.y = this.groundY;
         this.speed = KIWI_SPEED;
         this.lastBark = 0;
         this.rapidFire = false;
         this.rapidFireEnd = 0;
         this.invincible = false;
         this.invincibleEnd = 0;
+        // Jump
+        this.vy = 0;
+        this.onGround = true;
+        // Spinnies
+        this.spinniesActive = false;
+        this.spinniesEnd = 0;
+        this.spinniesAngle = 0;
+        this.spinniesFireTimer = 0;
+    }
+
+    jump() {
+        if (!this.onGround) return;
+        this.vy = JUMP_VELOCITY;
+        this.onGround = false;
     }
 
     update(dt, now) {
@@ -1413,6 +1672,17 @@ class Kiwi {
         }
         this.x = clamp(this.x, 0, CANVAS_W - this.w);
 
+        // Jump physics
+        if (!this.onGround) {
+            this.vy += GRAVITY * dt;
+            this.y += this.vy * dt;
+            if (this.y >= this.groundY) {
+                this.y = this.groundY;
+                this.vy = 0;
+                this.onGround = true;
+            }
+        }
+
         // Rapid fire timer
         if (this.rapidFire && now > this.rapidFireEnd) {
             this.rapidFire = false;
@@ -1421,6 +1691,34 @@ class Kiwi {
         // Invincibility timer
         if (this.invincible && now > this.invincibleEnd) {
             this.invincible = false;
+        }
+
+        // Spinnies timer
+        if (this.spinniesActive && now > this.spinniesEnd) {
+            this.spinniesActive = false;
+        }
+
+        // Spinnies auto-fire: barks in 8 directions
+        if (this.spinniesActive) {
+            this.spinniesAngle += 15 * dt;
+            this.spinniesFireTimer += dt * 1000;
+            if (this.spinniesFireTimer >= SPINNIES_FIRE_RATE) {
+                this.spinniesFireTimer = 0;
+                const cx = this.x + this.w / 2;
+                const cy = this.y + this.h / 2;
+                for (let i = 0; i < 8; i++) {
+                    const a = (Math.PI * 2 / 8) * i + this.spinniesAngle;
+                    game.barks.push({
+                        x: cx - 5,
+                        y: cy - 8,
+                        w: 10, h: 16,
+                        speed: BARK_SPEED,
+                        angle: Math.sin(a) * 0.8,
+                        vy: -Math.cos(a) * BARK_SPEED
+                    });
+                }
+                AudioSystem.playBark();
+            }
         }
 
         // Shooting
@@ -1439,17 +1737,40 @@ class Kiwi {
     }
 
     draw(now) {
+        // Draw ground shadow when airborne
+        if (!this.onGround) {
+            ctx.globalAlpha = 0.3;
+            ctx.fillStyle = '#000';
+            ctx.beginPath();
+            ctx.ellipse(this.x + this.w / 2, this.groundY + this.h - 5, this.w / 2 * 0.8, 4, 0, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.globalAlpha = 1;
+        }
+
         // Blink when invincible
         if (this.invincible && Math.floor(now / 100) % 2 === 0) {
             ctx.globalAlpha = 0.4;
         }
-        // Rapid fire glow
-        if (this.rapidFire) {
-            ctx.shadowColor = '#FFD700';
-            ctx.shadowBlur = 15;
+
+        // Spinnies: full body spin with pink glow
+        if (this.spinniesActive) {
+            ctx.save();
+            ctx.translate(this.x + this.w / 2, this.y + this.h / 2 - 4);
+            ctx.rotate(this.spinniesAngle);
+            ctx.shadowColor = COLORS.SPINNIES_PINK;
+            ctx.shadowBlur = 20;
+            drawKiwi(0, 0);
+            ctx.shadowBlur = 0;
+            ctx.restore();
+        } else {
+            // Rapid fire glow
+            if (this.rapidFire) {
+                ctx.shadowColor = '#FFD700';
+                ctx.shadowBlur = 15;
+            }
+            drawKiwi(this.x + this.w / 2, this.y + this.h / 2 - 4);
+            ctx.shadowBlur = 0;
         }
-        drawKiwi(this.x + this.w / 2, this.y + this.h / 2 - 4);
-        ctx.shadowBlur = 0;
         ctx.globalAlpha = 1;
     }
 
@@ -1481,6 +1802,112 @@ class Squirrel {
     getRect() {
         return { x: this.x, y: this.y, w: this.w, h: this.h };
     }
+}
+
+class Bird {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.w = 28;
+        this.h = 22;
+        this.alive = true;
+        this.frame = 0;
+        this.baseY = y;
+        this.time = Math.random() * Math.PI * 2;
+        this.type = 'bird';
+        this.dropTimer = 0;
+    }
+
+    update(dt) {
+        this.time += dt * 3;
+        this.y = this.baseY + Math.sin(this.time) * 20;
+        this.frame = Math.floor(this.time * 2) % 2;
+        this.dropTimer += dt * 1000;
+    }
+
+    draw() {
+        if (!this.alive) return;
+        drawBird(this.x + this.w / 2, this.y + this.h / 2, this.frame);
+    }
+
+    getRect() { return { x: this.x, y: this.y, w: this.w, h: this.h }; }
+}
+
+class Bee {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.w = 22;
+        this.h = 22;
+        this.alive = true;
+        this.frame = 0;
+        this.time = Math.random() * Math.PI * 2;
+        this.zigDir = 1;
+        this.zigTimer = 0;
+        this.type = 'bee';
+        this.dropTimer = 0;
+    }
+
+    update(dt) {
+        this.time += dt * 6;
+        this.frame = Math.floor(this.time) % 2;
+        this.zigTimer += dt;
+        if (this.zigTimer > 0.5) { this.zigTimer = 0; this.zigDir *= -1; }
+        this.x += BEE_SPEED * this.zigDir * dt * 0.3;
+        // Keep in bounds
+        if (this.x < 10) { this.x = 10; this.zigDir = 1; }
+        if (this.x + this.w > CANVAS_W - 10) { this.x = CANVAS_W - 10 - this.w; this.zigDir = -1; }
+        this.dropTimer += dt * 1000;
+    }
+
+    draw() {
+        if (!this.alive) return;
+        drawBee(this.x + this.w / 2, this.y + this.h / 2, this.frame);
+    }
+
+    getRect() { return { x: this.x, y: this.y, w: this.w, h: this.h }; }
+}
+
+class Mailman {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.w = 30;
+        this.h = 36;
+        this.alive = true;
+        this.hp = MAILMAN_HP;
+        this.frame = 0;
+        this.direction = 1;
+        this.walkTimer = 0;
+        this.type = 'mailman';
+        this.throwTimer = 0;
+    }
+
+    update(dt) {
+        this.x += MAILMAN_SPEED * this.direction * dt;
+        if (this.x <= 5 || this.x + this.w >= CANVAS_W - 5) {
+            this.direction *= -1;
+        }
+        this.walkTimer += dt;
+        if (this.walkTimer > 0.3) {
+            this.walkTimer = 0;
+            this.frame++;
+        }
+        this.throwTimer += dt * 1000;
+    }
+
+    takeDamage() {
+        this.hp--;
+        if (this.hp <= 0) { this.alive = false; return true; }
+        return false;
+    }
+
+    draw() {
+        if (!this.alive) return;
+        drawMailman(this.x + this.w / 2, this.y + this.h / 2, this.frame, this.hp);
+    }
+
+    getRect() { return { x: this.x, y: this.y, w: this.w, h: this.h }; }
 }
 
 class Boss {
@@ -1575,7 +2002,7 @@ class PowerUp {
         this.y = y;
         this.w = 20;
         this.h = 20;
-        this.type = type; // 'bone', 'treat', 'kiwi'
+        this.type = type; // 'bone', 'treat', 'kiwi', 'spinnies'
         this.speed = POWERUP_DROP_SPEED;
         this.spawnTime = performance.now();
     }
@@ -1597,6 +2024,8 @@ class PowerUp {
             drawTreat(cx, cy + bob);
         } else if (this.type === 'kiwi') {
             drawKiwiFruit(cx, cy + bob);
+        } else if (this.type === 'spinnies') {
+            drawSpinnies(cx, cy + bob, t);
         }
     }
 
@@ -1716,6 +2145,9 @@ const game = {
     wave: 1,
     kiwi: null,
     squirrels: [],
+    birds: [],
+    bees: [],
+    mailmen: [],
     boss: null,
     barks: [],
     acorns: [],
@@ -1742,6 +2174,7 @@ const game = {
     zoomiesShake: {x: 0, y: 0},
     zoomiesTimer: 0, // time since last random zoomies
     zoomiesTriggered: false,
+    spinniesSpawnTimer: 0,
 
     startGame() {
         this.state = STATES.PLAYING;
@@ -1752,8 +2185,12 @@ const game = {
         this.barks = [];
         this.acorns = [];
         this.powerUps = [];
+        this.birds = [];
+        this.bees = [];
+        this.mailmen = [];
         this.boss = null;
         this.gameOverNewHigh = false;
+        this.spinniesSpawnTimer = 0;
         this.spawnWave();
         // Ensure audio is initialized and resumed (critical for mobile)
         AudioSystem.init();
@@ -1766,11 +2203,17 @@ const game = {
         this.acorns = [];
         this.powerUps = [];
         this.squirrels = [];
+        this.birds = [];
+        this.bees = [];
+        this.mailmen = [];
         this.boss = null;
     },
 
     spawnWave() {
         this.squirrels = [];
+        this.birds = [];
+        this.bees = [];
+        this.mailmen = [];
         this.barks = [];
         this.acorns = [];
         this.powerUps = [];
@@ -1797,6 +2240,37 @@ const game = {
             }
         }
 
+        // Birds: appear from wave 2+
+        if (this.wave >= 2) {
+            const numBirds = Math.min(Math.floor(this.wave / 2), 4);
+            for (let i = 0; i < numBirds; i++) {
+                this.birds.push(new Bird(
+                    randInt(50, CANVAS_W - 80),
+                    randInt(40, 100)
+                ));
+            }
+        }
+        // Bees: appear from wave 4+
+        if (this.wave >= 4) {
+            const numBees = Math.min(Math.floor((this.wave - 3) / 2), 3);
+            for (let i = 0; i < numBees; i++) {
+                this.bees.push(new Bee(
+                    randInt(50, CANVAS_W - 80),
+                    randInt(50, 130)
+                ));
+            }
+        }
+        // Mailmen: appear from wave 5+
+        if (this.wave >= 5) {
+            const numMailmen = Math.min(Math.floor((this.wave - 4) / 3), 2);
+            for (let i = 0; i < numMailmen; i++) {
+                this.mailmen.push(new Mailman(
+                    randInt(50, CANVAS_W - 80),
+                    CANVAS_H - 130
+                ));
+            }
+        }
+
         this.squirrelDirection = 1;
         this.squirrelSpeed = SQUIRREL_MOVE_BASE + this.wave * 5;
         this.squirrelMoveTimer = 0;
@@ -1812,6 +2286,9 @@ const game = {
         this.barks = [];
         this.acorns = [];
         this.powerUps = [];
+        this.birds = [];
+        this.bees = [];
+        this.mailmen = [];
         AudioSystem.playBossAppear();
     },
 
@@ -1859,19 +2336,39 @@ const game = {
                 }
                 break;
             case 'kiwi':
-                // Screen clear bomb
+                // Screen clear bomb — clears ALL enemy types
                 spawnScreenFlash();
-                const alive = this.squirrels.filter(s => s.alive);
-                alive.forEach(s => {
+                const aliveSquirrels = this.squirrels.filter(s => s.alive);
+                aliveSquirrels.forEach(s => {
                     s.alive = false;
                     this.score += SCORE_SQUIRREL;
-                    spawnExplosion(
-                        s.x + s.w / 2,
-                        s.y + s.h / 2,
-                        [COLORS.KIWI_FRUIT_GREEN, COLORS.KIWI_FRUIT_LIGHT, '#ffffff'],
-                        6
-                    );
+                    spawnExplosion(s.x + s.w / 2, s.y + s.h / 2,
+                        [COLORS.KIWI_FRUIT_GREEN, COLORS.KIWI_FRUIT_LIGHT, '#ffffff'], 6);
                 });
+                this.birds.filter(b => b.alive).forEach(b => {
+                    b.alive = false;
+                    this.score += SCORE_BIRD;
+                    spawnExplosion(b.x + b.w / 2, b.y + b.h / 2,
+                        [COLORS.BIRD_BODY, COLORS.BIRD_WING, '#ffffff'], 6);
+                });
+                this.bees.filter(b => b.alive).forEach(b => {
+                    b.alive = false;
+                    this.score += SCORE_BEE;
+                    spawnExplosion(b.x + b.w / 2, b.y + b.h / 2,
+                        [COLORS.BEE_BODY, COLORS.BEE_STRIPE, '#ffffff'], 6);
+                });
+                this.mailmen.filter(m => m.alive).forEach(m => {
+                    m.alive = false;
+                    this.score += SCORE_MAILMAN;
+                    spawnExplosion(m.x + m.w / 2, m.y + m.h / 2,
+                        [COLORS.MAILMAN_SHIRT, COLORS.MAILMAN_HAT, '#ffffff'], 6);
+                });
+                break;
+            case 'spinnies':
+                this.kiwi.spinniesActive = true;
+                this.kiwi.spinniesEnd = performance.now() + SPINNIES_DURATION;
+                this.kiwi.spinniesAngle = 0;
+                this.kiwi.spinniesFireTimer = 0;
                 break;
         }
         // 15% chance any power-up triggers ZOOMIES
@@ -1890,18 +2387,22 @@ const game = {
         this.zoomiesAutoFireTimer = 0;
         this.kiwi.invincible = true;
         this.kiwi.invincibleEnd = performance.now() + 4200;
+        // Reset jump state — force back to ground
+        this.kiwi.y = this.kiwi.groundY;
+        this.kiwi.vy = 0;
+        this.kiwi.onGround = true;
         // Play a rapid series of barks to announce zoomies
         AudioSystem.playPowerUp();
     },
 
     maybeDropPowerUp(x, y) {
         if (Math.random() < POWERUP_CHANCE) {
-            const types = ['bone', 'treat', 'kiwi'];
-            // Weighted: bone 50%, treat 30%, kiwi 20%
+            // Weighted: bone 40%, treat 25%, spinnies 20%, kiwi 15%
             const r = Math.random();
             let type;
-            if (r < 0.5) type = 'bone';
-            else if (r < 0.8) type = 'treat';
+            if (r < 0.40) type = 'bone';
+            else if (r < 0.65) type = 'treat';
+            else if (r < 0.85) type = 'spinnies';
             else type = 'kiwi';
             this.powerUps.push(new PowerUp(x - 10, y - 10, type));
         }
@@ -1990,18 +2491,36 @@ function updatePlaying(dt, now) {
     // ZOOMIES update (overrides kiwi movement when active)
     updateZoomies(dt, now, g);
 
-    // Update barks (handle angled zoomies barks)
+    // Guaranteed spinnies spawn timer
+    g.spinniesSpawnTimer += dt;
+    if (g.spinniesSpawnTimer >= SPINNIES_SPAWN_INTERVAL) {
+        g.spinniesSpawnTimer = 0;
+        g.powerUps.push(new PowerUp(randInt(50, CANVAS_W - 50), -20, 'spinnies'));
+    }
+
+    // Update barks (handle angled zoomies/spinnies barks)
     g.barks.forEach(b => {
-        b.y -= b.speed * dt;
-        if (b.angle) b.x += b.angle * b.speed * dt;
+        if (b.vy !== undefined) {
+            // Spinnies bark: custom vy direction
+            b.y += b.vy * dt;
+            if (b.angle) b.x += b.angle * b.speed * dt;
+        } else {
+            b.y -= b.speed * dt;
+            if (b.angle) b.x += b.angle * b.speed * dt;
+        }
     });
-    g.barks = g.barks.filter(b => b.y > -20);
+    g.barks = g.barks.filter(b => b.y > -20 && b.y < CANVAS_H + 20 && b.x > -20 && b.x < CANVAS_W + 20);
 
     // Update acorns
     g.acorns.forEach(a => {
         a.y += a.speed * dt;
+        if (a.vx) a.x += a.vx * dt;
+        if (a.vy !== undefined) {
+            a.vy += 200 * dt; // gravity for thrown packages
+            a.y += a.vy * dt;
+        }
     });
-    g.acorns = g.acorns.filter(a => a.y < CANVAS_H + 20);
+    g.acorns = g.acorns.filter(a => a.y < CANVAS_H + 20 && a.y > -20);
 
     // Update power-ups
     g.powerUps.forEach(p => p.update(dt));
@@ -2017,74 +2536,175 @@ function updatePlaying(dt, now) {
         });
     }
 
+    // Update new enemies
+    g.birds.filter(e => e.alive).forEach(e => e.update(dt));
+    g.bees.filter(e => e.alive).forEach(e => e.update(dt));
+    g.mailmen.filter(e => e.alive).forEach(e => e.update(dt));
+
     // Move squirrels
-    const alive = g.squirrels.filter(s => s.alive);
-    if (alive.length === 0) {
+    const aliveSquirrels = g.squirrels.filter(s => s.alive);
+    const aliveBirds = g.birds.filter(b => b.alive);
+    const aliveBees = g.bees.filter(b => b.alive);
+    const aliveMailmen = g.mailmen.filter(m => m.alive);
+
+    // Wave completion: all enemy types cleared
+    if (aliveSquirrels.length === 0 && aliveBirds.length === 0 &&
+        aliveBees.length === 0 && aliveMailmen.length === 0) {
         g.nextWave();
         return;
     }
 
-    // Speed increases as fewer remain
-    const speedMult = 1 + (1 - alive.length / g.squirrels.length) * 2;
-    const moveAmount = g.squirrelSpeed * speedMult * dt;
+    // Speed increases as fewer squirrels remain
+    if (aliveSquirrels.length > 0) {
+        const speedMult = 1 + (1 - aliveSquirrels.length / g.squirrels.length) * 2;
+        const moveAmount = g.squirrelSpeed * speedMult * dt;
 
-    let hitEdge = false;
-    alive.forEach(s => {
-        s.x += moveAmount * g.squirrelDirection;
-        if (s.x + s.w >= CANVAS_W - 5 || s.x <= 5) {
-            hitEdge = true;
-        }
-    });
-
-    if (hitEdge) {
-        g.squirrelDirection *= -1;
-        alive.forEach(s => {
-            s.y += 10;
-            // Check if squirrels reached Kiwi's level
-            if (s.y + s.h >= g.kiwi.y) {
-                g.gameOver();
-                return;
+        let hitEdge = false;
+        aliveSquirrels.forEach(s => {
+            s.x += moveAmount * g.squirrelDirection;
+            if (s.x + s.w >= CANVAS_W - 5 || s.x <= 5) {
+                hitEdge = true;
             }
         });
+
+        if (hitEdge) {
+            g.squirrelDirection *= -1;
+            aliveSquirrels.forEach(s => {
+                s.y += 10;
+                if (s.y + s.h >= g.kiwi.groundY) {
+                    g.gameOver();
+                    return;
+                }
+            });
+            // Birds descend too when squirrels descend
+            aliveBirds.forEach(b => { b.baseY += 10; });
+        }
     }
 
     // Squirrels drop acorns
     g.squirrelDropTimer += dt;
     const dropInterval = Math.max(0.3, (SQUIRREL_DROP_INTERVAL_BASE / 1000) - g.wave * 0.1);
-    if (g.squirrelDropTimer > dropInterval && alive.length > 0) {
+    if (g.squirrelDropTimer > dropInterval && aliveSquirrels.length > 0) {
         g.squirrelDropTimer = 0;
-        const shooter = alive[randInt(0, alive.length - 1)];
+        const shooter = aliveSquirrels[randInt(0, aliveSquirrels.length - 1)];
         g.acorns.push({
             x: shooter.x + shooter.w / 2 - 5,
             y: shooter.y + shooter.h,
-            w: 10,
-            h: 12,
-            speed: ACORN_SPEED + g.wave * 10
+            w: 10, h: 12,
+            speed: ACORN_SPEED + g.wave * 10,
+            type: 'acorn'
         });
     }
+
+    // Birds drop feathers
+    aliveBirds.forEach(bird => {
+        if (bird.dropTimer >= BIRD_DROP_INTERVAL) {
+            bird.dropTimer = 0;
+            g.acorns.push({
+                x: bird.x + bird.w / 2 - 3,
+                y: bird.y + bird.h,
+                w: 6, h: 12,
+                speed: ACORN_SPEED + g.wave * 5,
+                type: 'feather'
+            });
+        }
+    });
+
+    // Bees drop stingers
+    aliveBees.forEach(bee => {
+        if (bee.dropTimer >= BEE_DROP_INTERVAL) {
+            bee.dropTimer = 0;
+            g.acorns.push({
+                x: bee.x + bee.w / 2 - 3,
+                y: bee.y + bee.h,
+                w: 6, h: 14,
+                speed: ACORN_SPEED + g.wave * 8,
+                type: 'stinger'
+            });
+        }
+    });
+
+    // Mailmen throw packages (arcing upward)
+    aliveMailmen.forEach(mm => {
+        if (mm.throwTimer >= MAILMAN_THROW_INTERVAL) {
+            mm.throwTimer = 0;
+            g.acorns.push({
+                x: mm.x + mm.w / 2 - 5,
+                y: mm.y - 5,
+                w: 10, h: 8,
+                speed: 0,
+                vx: (Math.random() - 0.5) * 100,
+                vy: -250,
+                type: 'package'
+            });
+        }
+    });
 
     // Collision: barks vs squirrels
     g.barks = g.barks.filter(bark => {
         let hit = false;
-        alive.forEach(sq => {
+        aliveSquirrels.forEach(sq => {
             if (sq.alive && rectCollide(bark, sq.getRect())) {
                 sq.alive = false;
                 hit = true;
                 g.score += SCORE_SQUIRREL;
                 AudioSystem.playSquirrelHit();
-                spawnExplosion(
-                    sq.x + sq.w / 2,
-                    sq.y + sq.h / 2,
-                    [COLORS.SQUIRREL_BODY, COLORS.SQUIRREL_LIGHT, '#ffaa44', '#ffdd88'],
-                    10
-                );
+                spawnExplosion(sq.x + sq.w / 2, sq.y + sq.h / 2,
+                    [COLORS.SQUIRREL_BODY, COLORS.SQUIRREL_LIGHT, '#ffaa44', '#ffdd88'], 10);
                 g.maybeDropPowerUp(sq.x + sq.w / 2, sq.y + sq.h / 2);
+            }
+        });
+        if (hit) return false;
+
+        // Barks vs birds
+        aliveBirds.forEach(bird => {
+            if (bird.alive && rectCollide(bark, bird.getRect())) {
+                bird.alive = false;
+                hit = true;
+                g.score += SCORE_BIRD;
+                AudioSystem.playSquirrelHit();
+                spawnExplosion(bird.x + bird.w / 2, bird.y + bird.h / 2,
+                    [COLORS.BIRD_BODY, COLORS.BIRD_WING, '#ffffff'], 8);
+                g.maybeDropPowerUp(bird.x + bird.w / 2, bird.y + bird.h / 2);
+            }
+        });
+        if (hit) return false;
+
+        // Barks vs bees
+        aliveBees.forEach(bee => {
+            if (bee.alive && rectCollide(bark, bee.getRect())) {
+                bee.alive = false;
+                hit = true;
+                g.score += SCORE_BEE;
+                AudioSystem.playSquirrelHit();
+                spawnExplosion(bee.x + bee.w / 2, bee.y + bee.h / 2,
+                    [COLORS.BEE_BODY, COLORS.BEE_STRIPE, '#FFD700'], 8);
+                g.maybeDropPowerUp(bee.x + bee.w / 2, bee.y + bee.h / 2);
+            }
+        });
+        if (hit) return false;
+
+        // Barks vs mailmen (takes 2 hits)
+        aliveMailmen.forEach(mm => {
+            if (mm.alive && rectCollide(bark, mm.getRect())) {
+                hit = true;
+                const killed = mm.takeDamage();
+                if (killed) {
+                    g.score += SCORE_MAILMAN;
+                    spawnExplosion(mm.x + mm.w / 2, mm.y + mm.h / 2,
+                        [COLORS.MAILMAN_SHIRT, COLORS.MAILMAN_HAT, '#ffffff'], 10);
+                    g.maybeDropPowerUp(mm.x + mm.w / 2, mm.y + mm.h / 2);
+                } else {
+                    spawnExplosion(mm.x + mm.w / 2, mm.y + mm.h / 2,
+                        ['#ffffff', '#ffaaaa'], 4);
+                }
+                AudioSystem.playSquirrelHit();
             }
         });
         return !hit;
     });
 
-    // Collision: acorns vs Kiwi
+    // Collision: acorns/projectiles vs Kiwi
     const kiwiRect = g.kiwi.getRect();
     g.acorns = g.acorns.filter(acorn => {
         if (rectCollide(acorn, kiwiRect)) {
@@ -2110,17 +2730,29 @@ function updateBoss(dt, now) {
     g.kiwi.update(dt, now);
     updateZoomies(dt, now, g);
 
+    // Guaranteed spinnies spawn timer
+    g.spinniesSpawnTimer += dt;
+    if (g.spinniesSpawnTimer >= SPINNIES_SPAWN_INTERVAL) {
+        g.spinniesSpawnTimer = 0;
+        g.powerUps.push(new PowerUp(randInt(50, CANVAS_W - 50), -20, 'spinnies'));
+    }
+
     // Update boss (keep updating even when defeated for the defeat timer)
     if (g.boss) {
         g.boss.update(dt, now);
     }
 
-    // Update barks
+    // Update barks (handle spinnies barks with custom vy)
     g.barks.forEach(b => {
-        b.y -= b.speed * dt;
-        if (b.angle) b.x += b.angle * b.speed * dt;
+        if (b.vy !== undefined) {
+            b.y += b.vy * dt;
+            if (b.angle) b.x += b.angle * b.speed * dt;
+        } else {
+            b.y -= b.speed * dt;
+            if (b.angle) b.x += b.angle * b.speed * dt;
+        }
     });
-    g.barks = g.barks.filter(b => b.y > -20);
+    g.barks = g.barks.filter(b => b.y > -20 && b.y < CANVAS_H + 20 && b.x > -20 && b.x < CANVAS_W + 20);
 
     // Update acorns
     g.acorns.forEach(a => {
@@ -2209,6 +2841,12 @@ function drawHUD() {
         const remaining = Math.max(0, (g.kiwi.rapidFireEnd - performance.now()) / 1000);
         drawRetroText(`RAPID FIRE! ${remaining.toFixed(1)}s`, CANVAS_W / 2, 40, 12, COLORS.BONE_GOLD, 'center');
     }
+
+    // Spinnies indicator
+    if (g.kiwi && g.kiwi.spinniesActive) {
+        const remaining = Math.max(0, (g.kiwi.spinniesEnd - performance.now()) / 1000);
+        drawRetroText(`SPINNIES! ${remaining.toFixed(1)}s`, CANVAS_W / 2, 55, 12, COLORS.SPINNIES_PINK, 'center');
+    }
 }
 
 function drawTitleScreen(now) {
@@ -2243,7 +2881,7 @@ function drawTitleScreen(now) {
     // Controls
     const controlsMsg = isTouchDevice
         ? 'USE ON-SCREEN BUTTONS TO MOVE AND BARK!'
-        : '\u2190 \u2192 MOVE   SPACE BARK   Z ZOOMIES   ENTER START';
+        : '\u2190 \u2192 MOVE   \u2191 JUMP   SPACE BARK   Z ZOOMIES';
     drawRetroText(controlsMsg, CANVAS_W / 2, CANVAS_H * 0.86, 12, '#888888', 'center');
 
     // Credits
@@ -2356,10 +2994,19 @@ function gameLoop(timestamp) {
         case STATES.PLAYING:
             // Draw squirrels
             game.squirrels.forEach(s => s.draw());
+            // Draw new enemies
+            game.birds.forEach(e => e.draw());
+            game.bees.forEach(e => e.draw());
+            game.mailmen.forEach(e => e.draw());
             // Draw barks
             game.barks.forEach(b => drawBark(b.x + b.w / 2, b.y));
-            // Draw acorns
-            game.acorns.forEach(a => drawAcorn(a.x + a.w / 2, a.y + a.h / 2));
+            // Draw projectiles (acorns, feathers, stingers, packages)
+            game.acorns.forEach(a => {
+                if (a.type === 'feather') drawFeather(a.x + a.w / 2, a.y + a.h / 2);
+                else if (a.type === 'stinger') drawStinger(a.x + a.w / 2, a.y + a.h / 2);
+                else if (a.type === 'package') drawPackage(a.x + a.w / 2, a.y + a.h / 2);
+                else drawAcorn(a.x + a.w / 2, a.y + a.h / 2);
+            });
             // Draw power-ups
             game.powerUps.forEach(p => p.draw());
             // Draw Kiwi
@@ -2386,6 +3033,9 @@ function gameLoop(timestamp) {
         case STATES.WAVE_TRANSITION:
             // Still draw existing entities
             game.squirrels.forEach(s => s.draw());
+            game.birds.forEach(e => e.draw());
+            game.bees.forEach(e => e.draw());
+            game.mailmen.forEach(e => e.draw());
             if (game.kiwi) game.kiwi.draw(now);
             drawHUD();
             drawWaveTransition(now);
