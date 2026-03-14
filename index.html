@@ -755,13 +755,14 @@ const muteBtn = document.getElementById('muteBtn');
         const touchControlsHeight = 160;
         const screenW = window.innerWidth;
         const screenH = window.innerHeight - touchControlsHeight;
-        // Scale so width stays at 800 internal pixels, height adjusts to match aspect ratio
-        CANVAS_H = Math.round(800 * (screenH / screenW));
+        // Scale height to match aspect ratio but cap at 4:3 to avoid too-tall canvas
+        const rawH = Math.round(800 * (screenH / screenW));
+        CANVAS_H = Math.min(rawH, 900);
         canvas.width = CANVAS_W;
         canvas.height = CANVAS_H;
     }
     // Mobile scale factor — makes Kiwi and key elements bigger on touch devices
-    window.MOBILE_SCALE = touch ? 1.6 : 1;
+    window.MOBILE_SCALE = touch ? 2.0 : 1;
 })();
 
 let audioInitialized = false;
@@ -1679,8 +1680,8 @@ class Kiwi {
         this.h = Math.round(40 * ms);
         this.drawScale = ms;
         this.x = CANVAS_W / 2 - this.w / 2;
-        // On mobile, push Kiwi higher so she's not behind controls
-        this.groundY = CANVAS_H - (ms > 1 ? 140 : 60);
+        // On mobile, push Kiwi up a bit so she's not behind controls
+        this.groundY = CANVAS_H - (ms > 1 ? 90 : 60);
         this.y = this.groundY;
         this.speed = KIWI_SPEED;
         this.lastBark = 0;
