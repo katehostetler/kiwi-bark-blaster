@@ -760,6 +760,8 @@ const muteBtn = document.getElementById('muteBtn');
         canvas.width = CANVAS_W;
         canvas.height = CANVAS_H;
     }
+    // Mobile scale factor — makes Kiwi and key elements bigger on touch devices
+    window.MOBILE_SCALE = touch ? 1.6 : 1;
 })();
 
 let audioInitialized = false;
@@ -1672,8 +1674,10 @@ function spawnScreenFlash() {
 
 class Kiwi {
     constructor() {
-        this.w = 40;
-        this.h = 40;
+        const ms = window.MOBILE_SCALE || 1;
+        this.w = Math.round(40 * ms);
+        this.h = Math.round(40 * ms);
+        this.drawScale = ms;
         this.x = CANVAS_W / 2 - this.w / 2;
         this.groundY = CANVAS_H - 60;
         this.y = this.groundY;
@@ -1794,11 +1798,11 @@ class Kiwi {
         // Spinnies: full body spin with pink glow
         if (this.spinniesActive) {
             ctx.save();
-            ctx.translate(this.x + this.w / 2, this.y + this.h / 2 - 4);
+            ctx.translate(this.x + this.w / 2, this.y + this.h / 2 - 4 * this.drawScale);
             ctx.rotate(this.spinniesAngle);
             ctx.shadowColor = COLORS.SPINNIES_PINK;
             ctx.shadowBlur = 20;
-            drawKiwi(0, 0);
+            drawKiwi(0, 0, this.drawScale);
             ctx.shadowBlur = 0;
             ctx.restore();
         } else {
@@ -1807,7 +1811,7 @@ class Kiwi {
                 ctx.shadowColor = '#FFD700';
                 ctx.shadowBlur = 15;
             }
-            drawKiwi(this.x + this.w / 2, this.y + this.h / 2 - 4);
+            drawKiwi(this.x + this.w / 2, this.y + this.h / 2 - 4 * this.drawScale, this.drawScale);
             ctx.shadowBlur = 0;
         }
         ctx.globalAlpha = 1;
@@ -1825,17 +1829,25 @@ class Kiwi {
 
 class Squirrel {
     constructor(x, y) {
+        const ms = window.MOBILE_SCALE || 1;
         this.x = x;
         this.y = y;
-        this.w = 30;
-        this.h = 30;
+        this.w = Math.round(30 * ms);
+        this.h = Math.round(30 * ms);
         this.alive = true;
         this.frame = 0;
+        this.drawScale = ms;
     }
 
     draw() {
         if (!this.alive) return;
-        drawSquirrel(this.x + this.w / 2, this.y + this.h / 2, this.frame);
+        const cx = this.x + this.w / 2;
+        const cy = this.y + this.h / 2;
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.scale(this.drawScale, this.drawScale);
+        drawSquirrel(0, 0, this.frame);
+        ctx.restore();
     }
 
     getRect() {
@@ -1845,16 +1857,18 @@ class Squirrel {
 
 class Bird {
     constructor(x, y) {
+        const ms = window.MOBILE_SCALE || 1;
         this.x = x;
         this.y = y;
-        this.w = 28;
-        this.h = 22;
+        this.w = Math.round(28 * ms);
+        this.h = Math.round(22 * ms);
         this.alive = true;
         this.frame = 0;
         this.baseY = y;
         this.time = Math.random() * Math.PI * 2;
         this.type = 'bird';
         this.dropTimer = 0;
+        this.drawScale = ms;
     }
 
     update(dt) {
@@ -1866,7 +1880,13 @@ class Bird {
 
     draw() {
         if (!this.alive) return;
-        drawBird(this.x + this.w / 2, this.y + this.h / 2, this.frame);
+        const cx = this.x + this.w / 2;
+        const cy = this.y + this.h / 2;
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.scale(this.drawScale, this.drawScale);
+        drawBird(0, 0, this.frame);
+        ctx.restore();
     }
 
     getRect() { return { x: this.x, y: this.y, w: this.w, h: this.h }; }
@@ -1874,10 +1894,11 @@ class Bird {
 
 class Bee {
     constructor(x, y) {
+        const ms = window.MOBILE_SCALE || 1;
         this.x = x;
         this.y = y;
-        this.w = 22;
-        this.h = 22;
+        this.w = Math.round(22 * ms);
+        this.h = Math.round(22 * ms);
         this.alive = true;
         this.frame = 0;
         this.time = Math.random() * Math.PI * 2;
@@ -1885,6 +1906,7 @@ class Bee {
         this.zigTimer = 0;
         this.type = 'bee';
         this.dropTimer = 0;
+        this.drawScale = ms;
     }
 
     update(dt) {
@@ -1901,7 +1923,13 @@ class Bee {
 
     draw() {
         if (!this.alive) return;
-        drawBee(this.x + this.w / 2, this.y + this.h / 2, this.frame);
+        const cx = this.x + this.w / 2;
+        const cy = this.y + this.h / 2;
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.scale(this.drawScale, this.drawScale);
+        drawBee(0, 0, this.frame);
+        ctx.restore();
     }
 
     getRect() { return { x: this.x, y: this.y, w: this.w, h: this.h }; }
@@ -1909,10 +1937,11 @@ class Bee {
 
 class Mailman {
     constructor(x, y) {
+        const ms = window.MOBILE_SCALE || 1;
         this.x = x;
         this.y = y;
-        this.w = 30;
-        this.h = 36;
+        this.w = Math.round(30 * ms);
+        this.h = Math.round(36 * ms);
         this.alive = true;
         this.hp = MAILMAN_HP;
         this.frame = 0;
@@ -1920,6 +1949,7 @@ class Mailman {
         this.walkTimer = 0;
         this.type = 'mailman';
         this.throwTimer = 0;
+        this.drawScale = ms;
     }
 
     update(dt) {
@@ -1943,7 +1973,13 @@ class Mailman {
 
     draw() {
         if (!this.alive) return;
-        drawMailman(this.x + this.w / 2, this.y + this.h / 2, this.frame, this.hp);
+        const cx = this.x + this.w / 2;
+        const cy = this.y + this.h / 2;
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.scale(this.drawScale, this.drawScale);
+        drawMailman(0, 0, this.frame, this.hp);
+        ctx.restore();
     }
 
     getRect() { return { x: this.x, y: this.y, w: this.w, h: this.h }; }
@@ -1951,10 +1987,12 @@ class Mailman {
 
 class Boss {
     constructor(wave) {
-        this.w = 80;
-        this.h = 70;
+        const ms = window.MOBILE_SCALE || 1;
+        this.w = Math.round(80 * ms);
+        this.h = Math.round(70 * ms);
         this.x = CANVAS_W / 2 - this.w / 2;
         this.y = 30;
+        this.drawScale = ms;
         this.speed = BOSS_SPEED;
         this.direction = 1;
         this.maxHp = BOSS_HP_BASE + wave * 2;
@@ -2002,7 +2040,13 @@ class Boss {
 
     draw() {
         if (!this.alive) return;
-        drawRaccoon(this.x + this.w / 2, this.y + this.h / 2 - 5, this.hp, this.maxHp);
+        const cx = this.x + this.w / 2;
+        const cy = this.y + this.h / 2 - 5 * this.drawScale;
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.scale(this.drawScale, this.drawScale);
+        drawRaccoon(0, 0, this.hp, this.maxHp);
+        ctx.restore();
     }
 
     getRect() {
